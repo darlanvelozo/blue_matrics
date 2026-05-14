@@ -1,0 +1,66 @@
+# BlueMetrics — Docker Compose para desenvolvimento
+#
+# Serviços de infraestrutura (postgres + redis) já disponíveis no Bloco 0.
+# Serviços de aplicação (backend, frontend, worker, beat) entram nos Blocos 1-2.
+
+name: bluemetrics
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bluemetrics-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bluemetrics}
+      POSTGRES_USER: ${POSTGRES_USER:-bluemetrics}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bluemetrics}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bluemetrics} -d ${POSTGRES_DB:-bluemetrics}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: bluemetrics-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ----------------------------------------------------------------
+  # Serviços abaixo são ativados nos blocos subsequentes
+  # ----------------------------------------------------------------
+  #
+  # backend:
+  #   build:
+  #     context: ../backend
+  #     dockerfile: Dockerfile
+  #   ...
+  #
+  # frontend:
+  #   build:
+  #     context: ../frontend
+  #     dockerfile: Dockerfile
+  #   ...
+  #
+  # worker:
+  #   ...
+  #
+  # beat:
+  #   ...
+
+volumes:
+  postgres_data:
+  redis_data:
