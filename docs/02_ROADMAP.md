@@ -16,7 +16,7 @@
 | 5b | Auditoria + correções (trial, last_12m civis, /billing+/settings+/insights placeholders, TrialBanner) | ✅ Concluído | 2026-05-22 |
 | 6 | Insights IA + resumo executivo diário | ✅ Concluído (engine de regras; LLM no 6b futuro) | 2026-05-22 |
 | 7 | Billing Stripe + planos + trial | ✅ Concluído (mock + Stripe real, UI premium) | 2026-05-22 |
-| 8 | Admin SaaS (MRR, churn, tenants) | ⏳ Pendente | — |
+| 8 | Admin SaaS (MRR, churn, tenants) | ✅ Concluído | 2026-05-22 |
 | 9 | Segurança & LGPD (rate limit, audit, headers) | ⏳ Pendente | — |
 | 10 | Observabilidade & production-ready | ⏳ Pendente | — |
 
