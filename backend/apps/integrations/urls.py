@@ -5,6 +5,8 @@ from .views import (
     CallbackView,
     CredentialsView,
     DisconnectView,
+    ExchangeCodeView,
+    ManualTokenView,
     StatusView,
 )
 
@@ -13,5 +15,15 @@ urlpatterns = [
     path("contaazul/credentials", CredentialsView.as_view(), name="contaazul-credentials"),
     path("contaazul/authorize", AuthorizeView.as_view(), name="contaazul-authorize"),
     path("contaazul/callback", CallbackView.as_view(), name="contaazul-callback"),
+    path(
+        "contaazul/exchange-code",
+        ExchangeCodeView.as_view(),
+        name="contaazul-exchange-code",
+    ),
+    path(
+        "contaazul/manual-token",
+        ManualTokenView.as_view(),
+        name="contaazul-manual-token",
+    ),
     path("contaazul/disconnect", DisconnectView.as_view(), name="contaazul-disconnect"),
 ]

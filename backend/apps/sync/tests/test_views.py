@@ -49,19 +49,20 @@ class TestRunNowView:
         resp = authed_client.post(self.URL)
         assert resp.status_code == 400
 
-    @patch("apps.sync.views.sync_tenant_task.delay")
-    def test_queues_task(self, mock_delay, authed_client):
+    @patch("apps.sync.views.sync_tenant_task.apply")
+    def test_queues_task(self, mock_apply, authed_client):
+        # Em testes, CELERY_TASK_ALWAYS_EAGER=True → view chama .apply() (não .delay()).
         from django.utils import timezone
         conn = ContaAzulConnection.objects.create(tenant=authed_client.tenant)
         conn.set_access_token("x", expires_in=3600)
         conn.mark_connected()
         conn.save()
-        mock_delay.return_value.id = "task-uuid-123"
+        mock_apply.return_value.id = "task-uuid-123"
 
         resp = authed_client.post(self.URL)
         assert resp.status_code == 202
         body = resp.json()
-        assert body["status"] == "queued"
+        assert body["status"] == "done"  # eager mode em testes
         assert body["task_id"] == "task-uuid-123"
-        mock_delay.assert_called_once_with(authed_client.tenant.id)
+        mock_apply.assert_called_once_with(args=[authed_client.tenant.id])
         _ = timezone  # quiet linter

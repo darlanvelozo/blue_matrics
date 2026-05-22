@@ -113,9 +113,7 @@ def map_category(payload: dict) -> dict:
         "external_id": _get_external_id(payload, "id", "uuid"),
         "name": (payload.get("nome") or payload.get("name") or "").strip() or "—",
         "kind": kind,
-        "parent_external_id": str(
-            payload.get("parentId") or payload.get("idPai") or ""
-        ),
+        "parent_external_id": _first(payload, "categoria_pai", "parentId", "idPai"),
     }
 
 

@@ -289,5 +289,37 @@ projeto_analise_dados_contazul/
 **Decisão:** funções puras em `kpis.py`, sem cache/MVs. Performance adequada até ~100k vendas em Postgres. MVs entram quando aparecer gargalo.
 **Trade-off:** queries podem ficar lentas se tenant tiver milhões de linhas. Aceitável para começar; refator em `apps.analytics.materialized` quando necessário.
 
+### Bloco 4b — Adapter dev app Conta Azul ✅
+- **Status:** concluído em 2026-05-22
+- **Contexto:** primeira integração real revelou diferenças entre o schema documentado e o real, e particularidades do app dev.
+- **Mudanças no modelo `ContaAzulConnection`:** novos campos `redirect_uri_override` e `auth_url_override` (vazios = usa defaults do settings).
+- **Service `ContaAzulOAuthService.for_connection(conn)`** agora aplica overrides do tenant automaticamente.
+- **Novos endpoints:**
+  - `POST /api/integrations/contaazul/exchange-code` — body `{code}`; valida creds, troca por tokens, salva
+  - `POST /api/integrations/contaazul/manual-token` — body `{access_token, refresh_token?, expires_in?, scope?}`; permite injetar tokens manualmente
+- **Schema real descoberto** (validado em produção contra `api-v2.contaazul.com` em 2026-05-22):
+  - `/categorias`: payload `{itens, itens_totais}`, sem paginação
+  - `/pessoa` (singular): `{itens, itens_totais}`, paginado por `pagina`/`tamanho_pagina`
+  - `/produtos` (plural): `{items, totalItems}` (EN!), `tamanho_pagina` ∈ {10,20,50,100,200,500,1000}
+  - `/servicos`: `{itens, itens_totais}`
+  - `/vendedor`, `/venda`, `/financeiro/*`: 404/405 na conta dev (paths reais provavelmente diferentes; aguarda exploração)
+- **`ContaAzulClient.paginate`** agora extrai de qualquer chave conhecida (`itens`, `data`, `items`, `content`), default page param é `pagina`.
+- **`ContaAzulClient._extract_items()`** método público estático para uso no orchestrator quando o endpoint não tem paginação.
+- **`RESOURCES_WITHOUT_PAGINATION`** em `orchestrator.py` lista recursos chamados com `get()` simples.
+- **UI:** página de Integrações ganhou toggle "App em modo desenvolvimento" no form de credenciais + 2 cards alternativos:
+  - **Caminho A:** colar `code` (suporta URL completa ou só o valor) → trade-by-tokens
+  - **Caminho B:** colar `access_token` direto → uso imediato (~1h)
+- **`/api/sync/run`** agora usa `apply()` (síncrono) quando `CELERY_TASK_ALWAYS_EAGER=True`; cai em `delay()` em prod.
+
+### ADR-010: BYO redirect_uri por tenant em vez de só global
+**Contexto:** apps Conta Azul em modo dev têm redirect_uri fixo (`https://contaazul.com`); em prod o desenvolvedor define o seu.
+**Decisão:** `redirect_uri_override` no model permite que cada tenant configure se for app dev. Fallback no settings global. Idem para `auth_url`.
+**Trade-off:** modelo cresce 2 campos; ganho é poder operar com app dev sem hackear o `.env`.
+
+### ADR-011: Tolerância a múltiplos schemas no client
+**Contexto:** API v2 mistura PT-BR (`itens`/`itens_totais`) e EN (`items`/`totalItems`) entre endpoints.
+**Decisão:** `_extract_items` tenta 4 chaves em ordem (`itens`, `data`, `items`, `content`). Defensivo e à prova de mudança.
+**Trade-off:** um pouco menos explícito, mas sobrevive a mudanças não anunciadas no schema.
+
 ### Bloco 6 a 10
 - Pendentes — preencher ao concluir.

@@ -38,6 +38,12 @@ class ContaAzulConnection(models.Model):
     client_id = models.CharField(max_length=255, blank=True, default="")
     client_secret_enc = models.TextField(blank=True, default="")
 
+    # Overrides para apps de DESENVOLVIMENTO da Conta Azul cujo redirect_uri é
+    # fixo (https://contaazul.com) e o auth endpoint é /login (não /oauth2/authorize).
+    # Vazios = usa defaults do settings (produção).
+    redirect_uri_override = models.CharField(max_length=500, blank=True, default="")
+    auth_url_override = models.CharField(max_length=500, blank=True, default="")
+
     # tokens criptografados
     access_token_enc = models.TextField(blank=True, default="")
     refresh_token_enc = models.TextField(blank=True, default="")

@@ -46,28 +46,33 @@ class ContaAzulOAuthService:
         http_client: httpx.Client | None = None,
         client_id: str | None = None,
         client_secret: str | None = None,
+        redirect_uri: str | None = None,
+        auth_url: str | None = None,
     ) -> None:
         cfg = settings.CONTA_AZUL
         self.client_id: str = client_id if client_id is not None else cfg["CLIENT_ID"]
         self.client_secret: str = (
             client_secret if client_secret is not None else cfg["CLIENT_SECRET"]
         )
-        self.redirect_uri: str = cfg["REDIRECT_URI"]
-        self.auth_url: str = cfg["AUTH_URL"]
+        self.redirect_uri: str = redirect_uri or cfg["REDIRECT_URI"]
+        self.auth_url: str = auth_url or cfg["AUTH_URL"]
         self.token_url: str = cfg["TOKEN_URL"]
         self.scope: str = cfg["SCOPE"]
         self._http = http_client  # injetado em testes
 
     @classmethod
     def for_connection(cls, conn, **kwargs) -> ContaAzulOAuthService:  # type: ignore[no-untyped-def]
-        """Constrói o serviço com credenciais do `ContaAzulConnection` se houver."""
+        """Constrói o serviço com credenciais + overrides do `ContaAzulConnection` se houver."""
+        params = dict(kwargs)
         if conn.has_credentials:
-            return cls(
-                client_id=conn.client_id,
-                client_secret=conn.client_secret,
-                **kwargs,
-            )
-        return cls(**kwargs)
+            params["client_id"] = conn.client_id
+            params["client_secret"] = conn.client_secret
+        # Overrides para dev apps (redirect/auth_url fixos pelo provider)
+        if getattr(conn, "redirect_uri_override", ""):
+            params.setdefault("redirect_uri", conn.redirect_uri_override)
+        if getattr(conn, "auth_url_override", ""):
+            params.setdefault("auth_url", conn.auth_url_override)
+        return cls(**params)
 
     # ------------------------------------------------------------------
     def build_authorize_url(self, *, state: str) -> str:

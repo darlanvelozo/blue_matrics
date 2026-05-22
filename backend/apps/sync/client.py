@@ -145,21 +145,25 @@ class ContaAzulClient:
         )
 
     # ------------------------------------------------------------------
+    # Chaves possíveis para a lista de itens, em ordem de preferência
+    _ITEMS_KEYS: tuple[str, ...] = ("itens", "data", "items", "content")
+
     def paginate(
         self,
         path: str,
         params: dict | None = None,
         *,
-        items_key: str = "data",
-        page_param: str = "page",
-        size_param: str = "size",
+        items_key: str | None = None,
+        page_param: str = "pagina",
+        size_param: str = "tamanho_pagina",
     ) -> Iterator[dict[str, Any]]:
         """
-        Gera todos os itens de um endpoint paginado.
+        Gera todos os itens de um endpoint paginado da Conta Azul v2.
 
-        Conta Azul v2 usa páginas indexadas a partir de 1 com `data` array
-        (e tipicamente `pagination` ou `totalPages` no payload). Este iterador
-        para quando a página vier vazia.
+        Heurísticas:
+        - lista pode vir em `itens` (v2 atual), `data`, `items` ou `content`
+        - paginação: tenta `pagina`/`tamanho_pagina` (v2 PT-BR), aceita também `page`/`size`
+        - itens_totais determina parada quando disponível
         """
         page = 1
         params = dict(params or {})
@@ -167,21 +171,34 @@ class ContaAzulClient:
             params[page_param] = page
             params[size_param] = self.page_size
             data = self.get(path, params=params)
-            items = data.get(items_key, []) if isinstance(data, dict) else []
+            items = self._extract_items(data, preferred_key=items_key)
             if not items:
                 return
             yield from items
             # Heurísticas de parada
-            total_pages = (
-                data.get("totalPages")
+            total = (
+                data.get("itens_totais")
+                or data.get("totalPages")
                 or data.get("total_pages")
                 or (data.get("pagination") or {}).get("totalPages")
+                if isinstance(data, dict)
+                else None
             )
-            if total_pages and page >= int(total_pages):
+            if total and isinstance(total, int) and page * self.page_size >= int(total):
                 return
             if len(items) < self.page_size:
                 return
             page += 1
+
+    @classmethod
+    def _extract_items(cls, data: Any, preferred_key: str | None = None) -> list[dict]:
+        if not isinstance(data, dict):
+            return []
+        keys = (preferred_key, *cls._ITEMS_KEYS) if preferred_key else cls._ITEMS_KEYS
+        for k in keys:
+            if k and isinstance(data.get(k), list):
+                return data[k]
+        return []
 
     # ------------------------------------------------------------------
     @staticmethod

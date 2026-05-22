@@ -44,21 +44,21 @@ def connected_tenant(make_tenant):
     return t, conn
 
 
-# Payloads sintéticos por endpoint
+# Payloads sintéticos por endpoint (usa schema real da Conta Azul v2)
 RESPONSES = {
-    "/categorias": {"data": [
-        {"id": "cat-r", "nome": "Vendas", "tipo": "receita"},
-        {"id": "cat-d", "nome": "Aluguel", "tipo": "despesa"},
+    "/categorias": {"itens": [
+        {"id": "cat-r", "nome": "Vendas", "tipo": "RECEITA"},
+        {"id": "cat-d", "nome": "Aluguel", "tipo": "DESPESA"},
     ]},
-    "/vendedores": {"data": [{"id": "vend-1", "nome": "Maria"}]},
-    "/pessoas": {"data": [
+    "/vendedor": {"itens": [{"id": "vend-1", "nome": "Maria"}]},
+    "/pessoa": {"itens": [
         {"id": "cli-1", "nome": "Padaria Pão Bom", "documento": "12345"},
         {"id": "cli-2", "nome": "Mercearia X"},
     ]},
-    "/produtos": {"data": [
+    "/produtos": {"itens": [
         {"id": "prod-1", "nome": "Pão Francês", "valorVenda": "0.50"},
     ]},
-    "/vendas": {"data": [
+    "/venda": {"itens": [
         {
             "id": "sale-1",
             "numero": "001",
@@ -72,10 +72,10 @@ RESPONSES = {
             ],
         }
     ]},
-    "/financeiro/contas-a-receber": {"data": [
+    "/financeiro/contas-a-receber": {"itens": [
         {"id": "ar-1", "valor": "100", "situacao": "pago", "idCategoria": "cat-r", "idCliente": "cli-1", "dataVencimento": "2026-04-10"},
     ]},
-    "/financeiro/contas-a-pagar": {"data": [
+    "/financeiro/contas-a-pagar": {"itens": [
         {"id": "ap-1", "valor": "500", "situacao": "pendente", "idCategoria": "cat-d", "dataVencimento": "2026-04-15"},
     ]},
 }
@@ -86,14 +86,13 @@ def _make_handler():
 
     def handler(req: httpx.Request) -> httpx.Response:
         path = req.url.path
-        # remove prefix /v1
         for p in RESPONSES:
             if path.endswith(p):
                 calls.append(p)
-                page = int(httpx.QueryParams(req.url.query).get("page", 1))
+                page = int(httpx.QueryParams(req.url.query).get("pagina", 1))
                 if page == 1:
                     return httpx.Response(200, json=RESPONSES[p])
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"itens": []})
         return httpx.Response(404, text=f"unknown path: {path}")
 
     return handler, calls
@@ -156,12 +155,12 @@ class TestSyncTenant:
         tenant, _ = connected_tenant
 
         def handler(req: httpx.Request) -> httpx.Response:
-            if "/vendas" in req.url.path:
+            if req.url.path.endswith("/venda"):
                 return httpx.Response(500, text="oops")
             for p, data in RESPONSES.items():
                 if req.url.path.endswith(p):
-                    page = int(httpx.QueryParams(req.url.query).get("page", 1))
-                    return httpx.Response(200, json=data if page == 1 else {"data": []})
+                    page = int(httpx.QueryParams(req.url.query).get("pagina", 1))
+                    return httpx.Response(200, json=data if page == 1 else {"itens": []})
             return httpx.Response(404)
 
         with httpx.Client(transport=httpx.MockTransport(handler)) as http:

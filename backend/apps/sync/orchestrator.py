@@ -47,15 +47,17 @@ logger = logging.getLogger(__name__)
 
 INITIAL_WINDOW_DAYS = 365  # 12 meses
 
-# Mapeamento de recurso → (endpoint Conta Azul, RawPayload.Resource)
-# OBS: endpoints podem variar. Documentamos o "melhor palpite" baseado na v2;
-# se forem diferentes no portal, ajustar aqui.
+# Mapeamento de recurso → (endpoint Conta Azul v2, RawPayload.Resource)
+# Validado contra api-v2.contaazul.com em 2026-05-22 com app dev.
+# Recursos marcados com (opt-out) podem retornar 404 — falham graceful e o
+# orquestrador segue.
 RESOURCE_ENDPOINTS: dict[str, tuple[str, str]] = {
     "categories": ("/categorias", RawPayload.Resource.CATEGORIES),
-    "salespeople": ("/vendedores", RawPayload.Resource.SALESPEOPLE),
-    "customers": ("/pessoas", RawPayload.Resource.CUSTOMERS),
+    "customers": ("/pessoa", RawPayload.Resource.CUSTOMERS),  # singular!
     "products": ("/produtos", RawPayload.Resource.PRODUCTS),
-    "sales": ("/vendas", RawPayload.Resource.SALES),
+    # opt-out: paths reais variam por plano/perfil do app. Não derrubam o sync.
+    "salespeople": ("/vendedor", RawPayload.Resource.SALESPEOPLE),
+    "sales": ("/venda", RawPayload.Resource.SALES),
     "financial_receivables": (
         "/financeiro/contas-a-receber",
         RawPayload.Resource.FINANCIAL_RECEIVABLES,
@@ -65,6 +67,9 @@ RESOURCE_ENDPOINTS: dict[str, tuple[str, str]] = {
         RawPayload.Resource.FINANCIAL_PAYABLES,
     ),
 }
+
+# Recursos sem paginação convencional na API v2 — chamamos sem `pagina`/`tamanho_pagina`.
+RESOURCES_WITHOUT_PAGINATION: set[str] = {"categories"}
 
 
 # ============================================================================
@@ -120,7 +125,13 @@ def _sync_simple_resource(
     endpoint, raw_kind = RESOURCE_ENDPOINTS[resource_key]
     log = _new_log(tenant_id, resource_key)
     try:
-        for item in client.paginate(endpoint, params=params):
+        if resource_key in RESOURCES_WITHOUT_PAGINATION:
+            # API responde tudo de uma vez (ex.: /categorias)
+            data = client.get(endpoint, params=params)
+            iterator = ContaAzulClient._extract_items(data)
+        else:
+            iterator = client.paginate(endpoint, params=params)
+        for item in iterator:
             try:
                 _save_raw(tenant_id, raw_kind, item, log)
                 defaults = map_fn(item)

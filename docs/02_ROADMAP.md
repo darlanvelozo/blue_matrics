@@ -12,6 +12,7 @@
 | 3 | Integração Conta Azul (OAuth2 + token storage) | ✅ Concluído | 2026-05-14 |
 | 4 | ETL & sync incremental (Celery + retry) | ✅ Concluído | 2026-05-14 |
 | 5 | Dashboards & KPIs (executivo, financeiro, comercial) | ✅ Concluído | 2026-05-14 |
+| 4b | Adapter dev app Conta Azul (exchange-code, manual-token, schema v2 real) | ✅ Concluído | 2026-05-22 |
 | 6 | Insights IA + resumo executivo diário | 🚧 Em andamento | — |
 | 7 | Billing Stripe + planos + trial | ⏳ Pendente | — |
 | 8 | Admin SaaS (MRR, churn, tenants) | ⏳ Pendente | — |
@@ -278,6 +279,34 @@ Legenda: ⏳ pendente · 🚧 em andamento · ✅ concluído · ⚠️ bloqueado
 - Filtros explícitos por categoria/vendedor (drill-down) → posterior
 
 ---
+
+## Bloco 4b — Adapter dev app Conta Azul ✅
+
+**Por que existiu:** ao integrar pela primeira vez contra a Conta Azul real, descobrimos:
+- Apps em **modo desenvolvimento** têm `redirect_uri` **fixo em `https://contaazul.com`** (não dá pra apontar pro nosso backend)
+- Auth endpoint do dev é `/login` (não `/oauth2/authorize`)
+- Schema real da v2 usa `itens`/`itens_totais` (PT-BR), mas `/produtos` usa `items`/`totalItems` (EN)
+- Endpoints reais: `/categorias`, `/pessoa` (singular), `/produtos` (plural), `/servicos`
+- `/vendedor`, `/venda`, `/financeiro/*` exigem POST/path diferente — não suportados na conta dev (falham graceful)
+- `tamanho_pagina` precisa ser ∈ {10, 20, 50, 100, 200, 500, 1000}
+
+**Entregas:**
+- [x] `ContaAzulConnection` ganhou `redirect_uri_override` e `auth_url_override`
+- [x] `ContaAzulOAuthService.for_connection(conn)` aplica overrides automaticamente
+- [x] Endpoint **`POST /api/integrations/contaazul/exchange-code`** — usuário cola `code` recebido e o backend troca por tokens
+- [x] Endpoint **`POST /api/integrations/contaazul/manual-token`** — injeta access_token direto (atalho para teste imediato com token entregue pelo portal)
+- [x] `ContaAzulClient.paginate` usa `pagina`/`tamanho_pagina` (v2 BR) e extrai `itens`, `data`, `items` ou `content`
+- [x] Orchestrator: endpoints atualizados (`/pessoa`, `/produtos`, `/categorias`) + flag `RESOURCES_WITHOUT_PAGINATION` para `/categorias`
+- [x] UI: form de credenciais com toggle "App em modo desenvolvimento" + 2 cards "Modo dev" colapsáveis (paste do code, paste do access_token)
+- [x] 11 novos testes em `test_dev_endpoints.py`
+
+**Validação:**
+- pytest: **135/135** ✅, ruff limpo
+- E2E REAL contra `api-v2.contaazul.com` com conta dev do usuário:
+  - `GET /v1/categorias` → **123 categorias importadas** ✅
+  - `GET /v1/pessoa`, `/v1/produtos` → 200 (conta dev vazia, mas adapter funciona)
+  - `GET /v1/vendedor`, `/v1/venda`, `/v1/financeiro/*` → 404/405 (não disponível em dev, falha graceful)
+- Status do tenant `dev-dieyson`: `connected`, `dev_mode=True`, último sync trouxe 123 categorias reais
 
 ## Bloco 6 — Insights IA
 

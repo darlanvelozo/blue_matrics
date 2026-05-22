@@ -71,7 +71,14 @@ class RunNowView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Em dev (eager mode) executa síncrono; em prod cai na fila.
+        # Em dev (eager mode) executa síncrono via .apply(); em prod cai na fila via .delay().
+        from django.conf import settings as dj_settings
+        if getattr(dj_settings, "CELERY_TASK_ALWAYS_EAGER", False):
+            async_result = sync_tenant_task.apply(args=[tenant.id])
+            return Response(
+                {"task_id": str(async_result.id), "status": "done"},
+                status=status.HTTP_202_ACCEPTED,
+            )
         async_result = sync_tenant_task.delay(tenant.id)
         return Response(
             {"task_id": str(async_result.id), "status": "queued"},

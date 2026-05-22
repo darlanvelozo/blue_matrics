@@ -5,15 +5,20 @@ import { Suspense, useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Copy,
   ExternalLink,
   Eye,
   EyeOff,
+  FlaskConical,
   Key,
+  KeyRound,
   Loader2,
   Plug,
   PlugZap,
   Trash2,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,11 +28,16 @@ import { ApiError } from "@/lib/api";
 import {
   deleteContaAzulCredentials,
   disconnectContaAzul,
+  exchangeContaAzulCode,
   getContaAzulStatus,
+  injectContaAzulToken,
   saveContaAzulCredentials,
   startContaAzulAuthorize,
   type ContaAzulStatus,
 } from "@/lib/integrations";
+
+const DEV_REDIRECT_URI = "https://contaazul.com";
+const DEV_AUTH_URL = "https://auth.contaazul.com/login";
 
 export default function IntegrationsPage() {
   return (
@@ -57,7 +67,7 @@ function IntegrationsPageInner() {
   const connectMutation = useMutation({
     mutationFn: startContaAzulAuthorize,
     onSuccess: ({ url }) => {
-      window.location.href = url;
+      window.open(url, "_blank", "noopener,noreferrer");
     },
   });
 
@@ -165,7 +175,7 @@ function IntegrationsPageInner() {
                     ) : (
                       <Plug className="h-4 w-4" />
                     )}
-                    Conectar Conta Azul
+                    {data.dev_mode ? "Abrir URL de autorização" : "Conectar Conta Azul"}
                     <ExternalLink className="h-3.5 w-3.5 opacity-70" />
                   </Button>
                 ) : (
@@ -182,6 +192,23 @@ function IntegrationsPageInner() {
                 )}
               </div>
 
+              {/* Em modo dev, mostra os 2 fluxos alternativos */}
+              {data.has_credentials && data.dev_mode && (
+                <div className="space-y-4 border-t border-[color:var(--border)] pt-6">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <FlaskConical className="h-4 w-4 text-amber-500" />
+                    Modo desenvolvimento — caminhos alternativos
+                  </div>
+                  <p className="text-xs text-[color:var(--muted-foreground)]">
+                    Como o app dev da Conta Azul tem redirect_uri fixo (
+                    <code className="rounded bg-[color:var(--muted)] px-1">{DEV_REDIRECT_URI}</code>
+                    ), o callback automático não chega aqui. Use um destes dois caminhos:
+                  </p>
+                  <ExchangeCodeCard />
+                  <ManualTokenCard />
+                </div>
+              )}
+
               <p className="border-t border-[color:var(--border)] pt-4 text-xs text-[color:var(--muted-foreground)]">
                 Ao conectar, você é redirecionado para a Conta Azul para autorizar o acesso.
                 Não armazenamos sua senha. Tokens e credenciais ficam criptografados em repouso.
@@ -195,19 +222,23 @@ function IntegrationsPageInner() {
 }
 
 // ============================================================
-// Credentials sub-card
+// Credentials sub-card (com toggle "modo dev")
 // ============================================================
 function CredentialsCard({ data }: { data: ContaAzulStatus }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [clientId, setClientId] = useState(data.client_id);
   const [clientSecret, setClientSecret] = useState("");
+  const [devMode, setDevMode] = useState<boolean>(!!data.dev_mode);
   const [showSecret, setShowSecret] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!editing) setClientId(data.client_id);
-  }, [data.client_id, editing]);
+    if (!editing) {
+      setClientId(data.client_id);
+      setDevMode(!!data.dev_mode);
+    }
+  }, [data.client_id, data.dev_mode, editing]);
 
   const saveMutation = useMutation({
     mutationFn: saveContaAzulCredentials,
@@ -240,10 +271,15 @@ function CredentialsCard({ data }: { data: ContaAzulStatus }) {
   function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!clientId || !clientSecret) return;
-    saveMutation.mutate({ client_id: clientId.trim(), client_secret: clientSecret });
+    saveMutation.mutate({
+      client_id: clientId.trim(),
+      client_secret: clientSecret,
+      redirect_uri_override: devMode ? DEV_REDIRECT_URI : "",
+      auth_url_override: devMode ? DEV_AUTH_URL : "",
+    });
   }
 
-  // Se já tem credenciais e não está editando → modo "card colapsado"
+  // Modo colapsado (já tem creds e não está editando)
   if (data.has_credentials && !editing) {
     return (
       <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--muted)]/40 p-4">
@@ -253,7 +289,15 @@ function CredentialsCard({ data }: { data: ContaAzulStatus }) {
               <Key className="h-4 w-4" />
             </span>
             <div>
-              <p className="text-sm font-semibold">Credenciais configuradas</p>
+              <p className="text-sm font-semibold">
+                Credenciais configuradas
+                {data.dev_mode && (
+                  <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                    <FlaskConical className="h-2.5 w-2.5" />
+                    DEV
+                  </span>
+                )}
+              </p>
               <p className="font-mono text-xs text-[color:var(--muted-foreground)]">
                 Client ID: {data.client_id}
               </p>
@@ -278,7 +322,6 @@ function CredentialsCard({ data }: { data: ContaAzulStatus }) {
     );
   }
 
-  // Sem credenciais ou editando → formulário expandido
   return (
     <div className="space-y-4 rounded-xl border border-blue-500/30 bg-blue-500/5 p-5">
       <div className="flex items-center gap-3">
@@ -299,31 +342,51 @@ function CredentialsCard({ data }: { data: ContaAzulStatus }) {
             >
               portaldevs.contaazul.com
             </a>{" "}
-            e cole abaixo o Client ID e Client Secret.
+            e cole abaixo Client ID e Client Secret.
           </p>
         </div>
       </div>
 
-      <div className="rounded-lg border border-[color:var(--border)] bg-[color:var(--background)] p-3">
-        <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[color:var(--muted-foreground)]">
-          Redirect URI (cadastre exatamente este valor no portal)
-        </p>
-        <div className="flex items-center gap-2">
-          <code className="flex-1 truncate rounded bg-[color:var(--muted)] px-2 py-1 font-mono text-xs">
-            {data.redirect_uri}
-          </code>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={copyRedirect}
-            className="shrink-0"
-          >
-            <Copy className="mr-1.5 h-3 w-3" />
-            {copied ? "Copiado!" : "Copiar"}
-          </Button>
+      {/* Toggle modo dev */}
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-[color:var(--border)] bg-[color:var(--background)] p-3">
+        <input
+          type="checkbox"
+          checked={devMode}
+          onChange={(e) => setDevMode(e.target.checked)}
+          className="mt-0.5 h-4 w-4 cursor-pointer"
+        />
+        <div className="flex-1 text-sm">
+          <span className="font-medium">App em modo desenvolvimento</span>
+          <p className="mt-0.5 text-xs text-[color:var(--muted-foreground)]">
+            Marque se você criou o app em <strong>portaldevs.contaazul.com</strong> (o redirect_uri
+            é fixo em <code className="text-[11px]">https://contaazul.com</code>). Em produção,
+            desmarque.
+          </p>
         </div>
-      </div>
+      </label>
+
+      {!devMode && (
+        <div className="rounded-lg border border-[color:var(--border)] bg-[color:var(--background)] p-3">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[color:var(--muted-foreground)]">
+            Redirect URI (cadastre exatamente este valor no portal)
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 truncate rounded bg-[color:var(--muted)] px-2 py-1 font-mono text-xs">
+              {data.redirect_uri}
+            </code>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={copyRedirect}
+              className="shrink-0"
+            >
+              <Copy className="mr-1.5 h-3 w-3" />
+              {copied ? "Copiado!" : "Copiar"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSave} className="space-y-3">
         <div className="space-y-1.5">
@@ -331,7 +394,7 @@ function CredentialsCard({ data }: { data: ContaAzulStatus }) {
           <Input
             id="client_id"
             required
-            placeholder="ex: abc123de-fghi-jklm-nopq-rstuvwxyz123"
+            placeholder="ex: 3sqstulr053aqoupif48h8jbja"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
             autoComplete="off"
@@ -399,6 +462,196 @@ function CredentialsCard({ data }: { data: ContaAzulStatus }) {
   );
 }
 
+// ============================================================
+// Modo dev — Card 1: paste do code
+// ============================================================
+function ExchangeCodeCard() {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(true);
+  const [code, setCode] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: exchangeContaAzulCode,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contaazul", "status"] });
+      setCode("");
+    },
+  });
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const value = code.trim();
+    if (!value) return;
+    // Aceita URL completa ou só o code
+    let finalCode = value;
+    try {
+      const url = new URL(value);
+      const c = url.searchParams.get("code");
+      if (c) finalCode = c;
+    } catch {
+      // não era URL, usa como está
+    }
+    mutation.mutate(finalCode);
+  }
+
+  return (
+    <details className="group rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]" open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="flex cursor-pointer items-center justify-between gap-3 p-4">
+        <span className="flex items-center gap-3 text-sm font-medium">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+            <KeyRound className="h-4 w-4" />
+          </span>
+          Caminho A: colar o <code className="rounded bg-[color:var(--muted)] px-1 text-xs">code</code> após autorização
+        </span>
+        {open ? <ChevronDown className="h-4 w-4 opacity-50" /> : <ChevronRight className="h-4 w-4 opacity-50" />}
+      </summary>
+      <div className="space-y-3 p-4 pt-0 text-sm">
+        <ol className="ml-5 list-decimal space-y-1 text-[color:var(--muted-foreground)]">
+          <li>Clique em <strong>Abrir URL de autorização</strong> acima.</li>
+          <li>Faça login na Conta Azul e clique em autorizar.</li>
+          <li>Você será redirecionado para <code className="text-xs">https://contaazul.com/?code=XXX&amp;state=YYY</code>.</li>
+          <li>Copie tudo da barra de endereço (ou apenas o valor de <code>code</code>) e cole abaixo.</li>
+        </ol>
+        <form onSubmit={onSubmit} className="space-y-2">
+          <Label htmlFor="code">Code (válido por 3 minutos)</Label>
+          <Input
+            id="code"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="Cole o code OU a URL completa"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {mutation.error instanceof ApiError && (
+            <Banner kind="error">
+              <AlertCircle className="h-4 w-4" />
+              {mutation.error.message}
+            </Banner>
+          )}
+          {mutation.isSuccess && (
+            <Banner kind="success">
+              <CheckCircle2 className="h-4 w-4" />
+              Tokens recebidos e armazenados. Conexão ativa.
+            </Banner>
+          )}
+          <Button type="submit" disabled={mutation.isPending || !code.trim()}>
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Trocar code por tokens
+          </Button>
+        </form>
+      </div>
+    </details>
+  );
+}
+
+// ============================================================
+// Modo dev — Card 2: paste do access_token direto
+// ============================================================
+function ManualTokenCard() {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [accessToken, setAccessToken] = useState("");
+  const [refreshToken, setRefreshToken] = useState("");
+  const [expiresIn, setExpiresIn] = useState(3600);
+
+  const mutation = useMutation({
+    mutationFn: injectContaAzulToken,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contaazul", "status"] });
+      setAccessToken("");
+      setRefreshToken("");
+    },
+  });
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accessToken.trim()) return;
+    mutation.mutate({
+      access_token: accessToken.trim(),
+      refresh_token: refreshToken.trim() || undefined,
+      expires_in: Number(expiresIn) || 3600,
+    });
+  }
+
+  return (
+    <details className="group rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]" open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="flex cursor-pointer items-center justify-between gap-3 p-4">
+        <span className="flex items-center gap-3 text-sm font-medium">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">
+            <Zap className="h-4 w-4" />
+          </span>
+          Caminho B: colar <code className="rounded bg-[color:var(--muted)] px-1 text-xs">access_token</code> direto (mais rápido)
+        </span>
+        {open ? <ChevronDown className="h-4 w-4 opacity-50" /> : <ChevronRight className="h-4 w-4 opacity-50" />}
+      </summary>
+      <div className="space-y-3 p-4 pt-0 text-sm">
+        <p className="text-[color:var(--muted-foreground)]">
+          O portal de devs entrega um <code>access_token</code> de teste já válido (vale ~1h).
+          Cole abaixo para sincronizar agora — sem refresh_token, você terá que renovar depois.
+        </p>
+        <form onSubmit={onSubmit} className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="access_token">Access Token</Label>
+            <textarea
+              id="access_token"
+              value={accessToken}
+              onChange={(e) => setAccessToken(e.target.value)}
+              className="w-full rounded-lg border border-[color:var(--border)] bg-[color:var(--background)] p-2 font-mono text-xs"
+              rows={3}
+              placeholder="eyJraWQiOi..."
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="refresh_token">Refresh Token (opcional)</Label>
+              <Input
+                id="refresh_token"
+                value={refreshToken}
+                onChange={(e) => setRefreshToken(e.target.value)}
+                placeholder="se você tiver"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="expires_in">Expira em (segundos)</Label>
+              <Input
+                id="expires_in"
+                type="number"
+                value={expiresIn}
+                onChange={(e) => setExpiresIn(Number(e.target.value))}
+                min={60}
+                max={86400}
+              />
+            </div>
+          </div>
+          {mutation.error instanceof ApiError && (
+            <Banner kind="error">
+              <AlertCircle className="h-4 w-4" />
+              {mutation.error.message}
+            </Banner>
+          )}
+          {mutation.isSuccess && (
+            <Banner kind="success">
+              <CheckCircle2 className="h-4 w-4" />
+              Token armazenado. Conexão ativa — pode sincronizar.
+            </Banner>
+          )}
+          <Button type="submit" disabled={mutation.isPending || !accessToken.trim()}>
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Salvar e conectar
+          </Button>
+        </form>
+      </div>
+    </details>
+  );
+}
+
+// ============================================================
+// Componentes auxiliares
+// ============================================================
 function StatusBadge({ status }: { status: ContaAzulStatus["status"] }) {
   const map = {
     connected: { label: "Conectado", cls: "bg-green-500/10 text-green-600 border-green-500/30" },

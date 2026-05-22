@@ -24,6 +24,10 @@ from .models import ContaAzulConnection, OAuthState
 from .services import ContaAzulOAuthService, OAuthError
 
 
+def _effective_redirect_uri(conn: ContaAzulConnection) -> str:
+    return conn.redirect_uri_override or settings.CONTA_AZUL["REDIRECT_URI"]
+
+
 def _serialize(conn: ContaAzulConnection) -> dict:
     return {
         "status": conn.status,
@@ -36,7 +40,10 @@ def _serialize(conn: ContaAzulConnection) -> dict:
         "last_error": conn.last_error,
         "has_credentials": conn.has_credentials,
         "client_id": conn.client_id,  # NÃO sensível; o secret nunca é exposto
-        "redirect_uri": settings.CONTA_AZUL["REDIRECT_URI"],
+        "redirect_uri": _effective_redirect_uri(conn),
+        "redirect_uri_override": conn.redirect_uri_override,
+        "auth_url_override": conn.auth_url_override,
+        "dev_mode": bool(conn.redirect_uri_override),
     }
 
 
@@ -170,7 +177,10 @@ class CredentialsView(APIView):
         return Response({
             "has_credentials": conn.has_credentials,
             "client_id": conn.client_id,
-            "redirect_uri": settings.CONTA_AZUL["REDIRECT_URI"],
+            "redirect_uri": _effective_redirect_uri(conn),
+            "redirect_uri_override": conn.redirect_uri_override,
+            "auth_url_override": conn.auth_url_override,
+            "dev_mode": bool(conn.redirect_uri_override),
         })
 
     def put(self, request: Request) -> Response:
@@ -184,6 +194,8 @@ class CredentialsView(APIView):
 
         client_id = (request.data.get("client_id") or "").strip()
         client_secret = (request.data.get("client_secret") or "").strip()
+        redirect_uri_override = (request.data.get("redirect_uri_override") or "").strip()
+        auth_url_override = (request.data.get("auth_url_override") or "").strip()
 
         if not client_id or not client_secret:
             return Response(
@@ -211,6 +223,8 @@ class CredentialsView(APIView):
 
         conn.client_id = client_id
         conn.set_client_secret(client_secret)
+        conn.redirect_uri_override = redirect_uri_override[:500]
+        conn.auth_url_override = auth_url_override[:500]
 
         if rotated or conn.status == ContaAzulConnection.Status.CONNECTED:
             # se trocou as credenciais ou já estava conectado, tokens antigos
@@ -224,7 +238,10 @@ class CredentialsView(APIView):
         return Response({
             "has_credentials": conn.has_credentials,
             "client_id": conn.client_id,
-            "redirect_uri": settings.CONTA_AZUL["REDIRECT_URI"],
+            "redirect_uri": _effective_redirect_uri(conn),
+            "redirect_uri_override": conn.redirect_uri_override,
+            "auth_url_override": conn.auth_url_override,
+            "dev_mode": bool(conn.redirect_uri_override),
         })
 
     def delete(self, request: Request) -> Response:
@@ -246,6 +263,8 @@ class CredentialsView(APIView):
         conn.refresh_token_enc = ""
         conn.expires_at = None
         conn.status = ContaAzulConnection.Status.DISCONNECTED
+        conn.redirect_uri_override = ""
+        conn.auth_url_override = ""
         conn.save()
         return Response({"has_credentials": False})
 
@@ -271,5 +290,120 @@ class DisconnectView(APIView):
         conn.expires_at = None
         conn.status = ContaAzulConnection.Status.DISCONNECTED
         conn.last_error = ""
+        conn.save()
+        return Response(_serialize(conn))
+
+
+class ExchangeCodeView(APIView):
+    """
+    POST /api/integrations/contaazul/exchange-code
+    Body: { "code": "<auth code>" }
+
+    Para apps DEV cujo redirect_uri é fixo (https://contaazul.com): o usuário
+    autoriza, copia o `?code=` da URL e cola aqui. Trocamos por tokens.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        from apps.tenants.utils import get_request_tenant
+        tenant = get_request_tenant(request)
+        if tenant is None:
+            return Response(
+                {"error": {"code": "no_tenant", "message": "Tenant não encontrado."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        code = (request.data.get("code") or "").strip()
+        if not code:
+            return Response(
+                {"error": {"code": "missing_code", "message": "Informe o `code` recebido."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            conn = ContaAzulConnection.objects.get(tenant=tenant)
+        except ContaAzulConnection.DoesNotExist:
+            return Response(
+                {"error": {
+                    "code": "no_credentials",
+                    "message": "Cadastre client_id e client_secret antes.",
+                }},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not conn.has_credentials:
+            return Response(
+                {"error": {
+                    "code": "no_credentials",
+                    "message": "Cadastre client_id e client_secret antes.",
+                }},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service = ContaAzulOAuthService.for_connection(conn)
+        try:
+            tokens = service.exchange_code(code)
+        except OAuthError as e:
+            conn.mark_error(str(e))
+            conn.save()
+            return Response(
+                {"error": {"code": "exchange_failed", "message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        conn.set_access_token(tokens.access_token, expires_in=tokens.expires_in)
+        if tokens.refresh_token:
+            conn.set_refresh_token(tokens.refresh_token)
+        conn.scope = tokens.scope or conn.scope
+        conn.mark_connected()
+        conn.save()
+        return Response(_serialize(conn))
+
+
+class ManualTokenView(APIView):
+    """
+    POST /api/integrations/contaazul/manual-token
+    Body: { "access_token": "...", "refresh_token": "...", "expires_in": 3600, "scope": "..." }
+
+    Permite injetar tokens obtidos manualmente (ex.: access_token que o portal
+    dev da Conta Azul entrega na criação do app). Útil para sincronizar agora
+    sem completar fluxo OAuth.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        from apps.tenants.utils import get_request_tenant
+        tenant = get_request_tenant(request)
+        if tenant is None:
+            return Response(
+                {"error": {"code": "no_tenant", "message": "Tenant não encontrado."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        access_token = (request.data.get("access_token") or "").strip()
+        if not access_token:
+            return Response(
+                {"error": {
+                    "code": "missing_access_token",
+                    "message": "Informe `access_token`.",
+                }},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        refresh_token = (request.data.get("refresh_token") or "").strip()
+        try:
+            expires_in = int(request.data.get("expires_in") or 3600)
+        except (TypeError, ValueError):
+            expires_in = 3600
+        scope = (request.data.get("scope") or "").strip()
+
+        conn, _ = ContaAzulConnection.objects.get_or_create(tenant=tenant)
+        conn.set_access_token(access_token, expires_in=expires_in)
+        if refresh_token:
+            conn.set_refresh_token(refresh_token)
+        if scope:
+            conn.scope = scope
+        conn.mark_connected()
         conn.save()
         return Response(_serialize(conn))

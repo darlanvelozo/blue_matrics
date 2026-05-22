@@ -148,8 +148,8 @@ class TestPaginate:
         }
 
         def handler(req: httpx.Request) -> httpx.Response:
-            page = int(httpx.QueryParams(req.url.query).get("page", 1))
-            return httpx.Response(200, json={"data": pages[page]})
+            page = int(httpx.QueryParams(req.url.query).get("pagina", 1))
+            return httpx.Response(200, json={"itens": pages[page]})
 
         with httpx.Client(transport=httpx.MockTransport(handler)) as http:
             client = ContaAzulClient(connection, http_client=http, page_size=2)
