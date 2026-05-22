@@ -66,7 +66,10 @@ Veja [`docs/02_ROADMAP.md`](docs/02_ROADMAP.md) para o status detalhado.
 - ✅ Bloco 3 — Integração Conta Azul (OAuth2 + Fernet + UI, 50/50 testes backend)
 - ✅ Bloco 4 — ETL & sync (BYO credentials + Bronze/Silver + cliente HTTP resiliente + UI, 93/93 testes)
 - ✅ Bloco 5 — Dashboards & KPIs (3 dashboards + Recharts + seed sintético, 124/124 testes)
-- ⏳ Bloco 6 a 10 — pendentes
+- ✅ Bloco 4b — Adapter dev app Conta Azul (BYO redirect + exchange-code + manual-token)
+- ✅ Bloco 5b — Auditoria + correções (12 rotas verde, sem 404, TrialBanner, last_12m civis)
+- ✅ Bloco 6 — Insights IA (8 regras + UI premium + widget na home, 155/155 testes)
+- ⏳ Bloco 7 a 10 — pendentes
 
 ### Seed de demo
 

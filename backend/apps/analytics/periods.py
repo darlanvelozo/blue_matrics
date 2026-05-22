@@ -70,7 +70,9 @@ def resolve_period(
     if p == "ytd":
         return Period(start=t.replace(month=1, day=1), end=t)
     if p == "last_12m":
-        return Period(start=t - relativedelta(months=12) + timedelta(days=1), end=t)
+        # 12 meses civis: dia 1 do mês de 11 meses atrás até hoje.
+        # Resultado: gráfico mensal com 12 buckets (mês corrente + 11 anteriores).
+        return Period(start=t.replace(day=1) - relativedelta(months=11), end=t)
     # default
     return Period(start=t - timedelta(days=29), end=t)
 

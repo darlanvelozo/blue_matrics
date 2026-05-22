@@ -3,6 +3,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppHeader } from "@/components/app/header";
 import { AppSidebar } from "@/components/app/sidebar";
+import { TrialBanner } from "@/components/app/trial-banner";
 import { ApiError } from "@/lib/api";
 import { getMe } from "@/lib/auth";
 import type { User } from "@/lib/auth";
@@ -48,6 +49,7 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
       <AppSidebar />
       <div className="flex min-h-screen flex-1 flex-col">
         <AppHeader user={user} />
+        <TrialBanner user={user} />
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
     </div>

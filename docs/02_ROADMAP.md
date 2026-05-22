@@ -13,7 +13,8 @@
 | 4 | ETL & sync incremental (Celery + retry) | ✅ Concluído | 2026-05-14 |
 | 5 | Dashboards & KPIs (executivo, financeiro, comercial) | ✅ Concluído | 2026-05-14 |
 | 4b | Adapter dev app Conta Azul (exchange-code, manual-token, schema v2 real) | ✅ Concluído | 2026-05-22 |
-| 6 | Insights IA + resumo executivo diário | 🚧 Em andamento | — |
+| 5b | Auditoria + correções (trial, last_12m civis, /billing+/settings+/insights placeholders, TrialBanner) | ✅ Concluído | 2026-05-22 |
+| 6 | Insights IA + resumo executivo diário | ✅ Concluído (engine de regras; LLM no 6b futuro) | 2026-05-22 |
 | 7 | Billing Stripe + planos + trial | ⏳ Pendente | — |
 | 8 | Admin SaaS (MRR, churn, tenants) | ⏳ Pendente | — |
 | 9 | Segurança & LGPD (rate limit, audit, headers) | ⏳ Pendente | — |
@@ -308,7 +309,68 @@ Legenda: ⏳ pendente · 🚧 em andamento · ✅ concluído · ⚠️ bloqueado
   - `GET /v1/vendedor`, `/v1/venda`, `/v1/financeiro/*` → 404/405 (não disponível em dev, falha graceful)
 - Status do tenant `dev-dieyson`: `connected`, `dev_mode=True`, último sync trouxe 123 categorias reais
 
-## Bloco 6 — Insights IA
+## Bloco 5b — Auditoria & correções ✅
+
+**Descobertas e fixes na auditoria geral:**
+- [x] Sidebar tinha 3 links para páginas inexistentes (`/app/insights`, `/app/billing`, `/app/settings`) → criadas com componente `ComingSoon` (insights agora é a real)
+- [x] `last_12m` mostrava meses zerados nas pontas → ajustado para 12 meses civis (`day=1` do mês -11)
+- [x] Seed só tinha dados até 14/05 → re-rodado, agora 2400 vendas + 128 entradas financeiras em 12 meses completos
+- [x] Trial do Dieyson expirado → estendido + criado `TrialBanner` que aparece nos últimos 7 dias
+- [x] `connectMutation` abria popup (bloqueado em alguns browsers) → em prod usa redirect na mesma aba; em dev mode abre nova aba (intencional)
+- [x] `/api/sync/run` quebrava em eager mode (`delay()` chamava broker) → usa `apply()` quando `CELERY_TASK_ALWAYS_EAGER=True`
+- [x] `/app` home era empty state → reescrito como dashboard de visão geral com KPIs + insights recentes + status integração + atalhos
+- [x] Componente `ComingSoon` reutilizável para placeholders premium
+
+**Validação:**
+- pytest 155/155 ✅, ruff limpo
+- Smoke E2E todas as 12 rotas frontend 200
+- tsc 0 erros, next build 13 rotas estáticas
+
+## Bloco 6 — Insights IA ✅
+
+**Objetivo:** análise automática dos dados gerando observações em linguagem natural.
+
+**Entregas:**
+
+**Backend (`apps/insights`):**
+- [x] Model `Insight` (kind, severity, title, narrative, data JSONB, period, read/dismissed timestamps) com constraint único por `(tenant, kind, period)` → idempotente
+- [x] 10 kinds: `revenue_drop`, `revenue_surge`, `expense_surge`, `top_customer`, `top_product`, `inactive_customer`, `overdue_high`, `cash_negative`, `ticket_drop`, `seasonality`
+- [x] 4 severidades: `info`, `success`, `warning`, `critical`
+- [x] **Engine de regras** (`rules.py`): 8 regras puras determinísticas
+  - `rule_revenue_change` (queda/pico MoM > 10%/15%)
+  - `rule_expense_surge` (despesas > 20% mês anterior)
+  - `rule_ticket_drop` (ticket cai > 10%)
+  - `rule_overdue_high` (inadimplência > 10%, crítico > 25%)
+  - `rule_top_customer_last_month`
+  - `rule_top_product_last_month`
+  - `rule_inactive_customers` (≥3 compras nos últimos 12m, parou há 90d)
+  - `rule_cash_negative`
+- [x] Narrativa em PT-BR com formatação BRL e nomes de meses
+- [x] `generate_insights_for_tenant()` materializa via `update_or_create` (idempotente)
+- [x] 4 endpoints: `GET /api/insights/`, `POST /generate`, `POST /<id>/read`, `POST /<id>/dismiss`
+- [x] 18 testes (regras + views + isolamento por tenant)
+
+**Frontend:**
+- [x] `lib/insights.ts` com tipos TS
+- [x] `/app/insights` premium: lista por severidade, ícone por kind, badge colorido, narrativa, botão dispensar
+- [x] Auto-mark-read ao clicar no card
+- [x] Botão "Gerar insights agora" com estado de loading
+- [x] Empty state + erro handling
+- [x] Widget de insights recentes no `/app` home
+
+**Validação:**
+- pytest **155/155** ✅ (18 novos)
+- ruff limpo
+- E2E real contra tenant `dev-dieyson`: 2 insights gerados (top customer + top product) com narrativa correta
+- Dismiss e mark-read funcionam, isolamento por tenant validado (404 ao tentar dismissar de outro tenant)
+
+**Pendências (Bloco 6b futuro):**
+- Narrator LLM (Claude Sonnet) para narrativa mais rica
+- Job diário Celery beat (`generate_insights_for_all_tenants`)
+- Resumo executivo diário por e-mail (Resend)
+- Assistente conversacional in-app
+
+## Bloco 6 (original) — Insights IA
 
 **Objetivo:** plataforma "fala" com o usuário.
 

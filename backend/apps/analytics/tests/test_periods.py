@@ -34,7 +34,8 @@ class TestResolvePeriod:
     def test_last_12m(self):
         p = resolve_period(preset="last_12m")
         assert p.end == date(2026, 5, 14)
-        assert p.start == date(2025, 5, 15)
+        # 12 meses civis: dia 1 do mês 11 meses antes
+        assert p.start == date(2025, 6, 1)
 
     def test_explicit_range(self):
         p = resolve_period(start="2026-01-01", end="2026-03-31")

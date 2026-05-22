@@ -67,7 +67,13 @@ function IntegrationsPageInner() {
   const connectMutation = useMutation({
     mutationFn: startContaAzulAuthorize,
     onSuccess: ({ url }) => {
-      window.open(url, "_blank", "noopener,noreferrer");
+      // Em dev mode (redirect para https://contaazul.com) abrimos nova aba para o
+      // usuário copiar o code; em prod, redirect normal na mesma aba.
+      if (data?.dev_mode) {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else {
+        window.location.href = url;
+      }
     },
   });
 
