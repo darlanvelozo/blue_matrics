@@ -8,6 +8,7 @@ import { EmptyDashboardState } from "@/components/dashboards/empty-state";
 import { FiltersPanel, type DashboardFilters } from "@/components/dashboards/filters-panel";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { PeriodFilter } from "@/components/dashboards/period-filter";
+import { ReportActions } from "@/components/dashboards/report-actions";
 import { getFinancial } from "@/lib/dashboards";
 import { usePeriod } from "@/lib/use-period";
 
@@ -60,6 +61,7 @@ function Inner() {
             showCustomer={true}
             showCategory={true}
           />
+          <ReportActions dashboard="financial" preset={preset} />
         </div>
       </header>
 

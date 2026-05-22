@@ -64,6 +64,8 @@ LOCAL_APPS = [
     "apps.security",
     "apps.observability",
     "apps.explorer",
+    "apps.goals",
+    "apps.reports",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -91,7 +93,7 @@ MIDDLEWARE = [
 # ---------------------------------------------------------------------------
 # App version (lido por /api/status)
 # ---------------------------------------------------------------------------
-APP_VERSION = "0.10.0"
+APP_VERSION = "0.11.0"
 
 ROOT_URLCONF = "bluemetrics.urls"
 

@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Settings,
   ShoppingCart,
+  Target,
   Users,
   Wallet,
   X,
@@ -26,6 +27,7 @@ const items = [
   { href: "/app/dashboards/financeiro", label: "Financeiro", icon: Wallet, section: "Dashboards" },
   { href: "/app/dashboards/comercial", label: "Comercial", icon: ShoppingCart, section: "Dashboards" },
   { href: "/app/insights", label: "Insights", icon: Brain, section: "Dashboards" },
+  { href: "/app/goals", label: "Metas", icon: Target, section: "Dashboards" },
   { href: "/app/sales", label: "Vendas", icon: Receipt, section: "Dados" },
   { href: "/app/customers", label: "Clientes", icon: Users, section: "Dados" },
   { href: "/app/products", label: "Produtos", icon: Package, section: "Dados" },
@@ -119,7 +121,7 @@ export function AppSidebar({
           })}
         </nav>
         <div className="border-t border-[color:var(--border)] p-3 text-xs text-[color:var(--muted-foreground)]">
-          <p>BlueMetrics v0.10</p>
+          <p>BlueMetrics v0.11</p>
         </div>
       </aside>
     </>

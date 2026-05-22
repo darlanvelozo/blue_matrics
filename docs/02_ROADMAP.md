@@ -19,6 +19,9 @@
 | 8 | Admin SaaS (MRR, churn, tenants) | ✅ Concluído | 2026-05-22 |
 | 9 | Segurança & LGPD (rate limit, audit, headers) | ✅ Concluído | 2026-05-22 |
 | 10 | Observabilidade & production-ready | ✅ Concluído | 2026-05-22 |
+| Onda 1 | Polish + bugs (UX, IDs, race conditions) | ✅ Concluído | 2026-05-22 |
+| Onda 2 | Filtros avançados + drill-down + páginas de dados | ✅ Concluído | 2026-05-22 |
+| Onda 3 | Metas (Goals) + exportações Excel/HTML + link público | ✅ Concluído | 2026-05-22 |
 
 Legenda: ⏳ pendente · 🚧 em andamento · ✅ concluído · ⚠️ bloqueado
 
@@ -464,6 +467,72 @@ Legenda: ⏳ pendente · 🚧 em andamento · ✅ concluído · ⚠️ bloqueado
 - CI verde
 - `docker compose -f docker-compose.prod.yml up` sobe stack completa
 - Sentry recebe erro de teste
+
+---
+
+## Onda 1 — Polish + bugs ✅
+
+**Objetivo:** corrigir arestas e endurecer UX antes de adicionar features novas.
+
+**Entregas:**
+- Race conditions em sync SQLite resolvidas (locks + isolation)
+- TanStack Query queries normalizadas (key estável, refetch sem flicker)
+- Empty states padronizados em todos os dashboards
+- Bug em `/login` resolvido (rota não autenticada também tinha tenant injection)
+- Skeletons coerentes durante loading
+- Seed `seed_demo.py` ajustado para gerar quedas reais (faturamento −31% em abril/2026 → gera insight)
+
+---
+
+## Onda 2 — Filtros + drill-down + páginas de dados ✅
+
+**Objetivo:** dar ao usuário poder de exploração sobre os dashboards.
+
+**Entregas:**
+- `apps.analytics.kpis.Filters` (dataclass frozen) propagado por todos os KPIs
+- `apps.explorer` — endpoints paginados: customers, products, sales, sales/<id>, financial, filter-options
+- Páginas `/app/customers`, `/app/products`, `/app/sales` com tabela + paginação
+- `FiltersPanel` (date range custom, vendedor, cliente, produto, categoria)
+- `DrillDownModal` ao clicar em barra do gráfico → top vendas do mês
+- `usePeriod` hook sincronizando `?period=` URL ↔ localStorage
+- Sidebar reorganizado em 3 seções: Dashboards / Dados / Sistema
+
+---
+
+## Onda 3 — Metas + exportações + link público ✅
+
+**Objetivo:** completar o ciclo "ver → planejar → compartilhar" do BI.
+
+**Entregas backend:**
+- `apps.goals` — `Goal` (4 tipos: revenue, net_profit, num_sales, avg_ticket; 3 períodos: mensal/trimestral/anual)
+- `Goal.current_progress()` calcula valor atual via KPIs sob demanda
+- CRUD completo: `GET/POST /api/goals/`, `GET/PATCH/DELETE /api/goals/<id>`
+- `apps.reports` — `SharedReport` com token opaco (32-byte url-safe), expira em 1-90 dias
+- Exporters Excel via `openpyxl` (3 dashboards × planilhas estruturadas com KPIs + top rankings + séries mensais)
+- HTML printable (Ctrl+P → "Salvar como PDF") — sem dependência de WeasyPrint/libs nativas
+- `GET /api/reports/export/<dashboard>/<fmt>` (autenticado)
+- `GET/POST /api/reports/shares`, `DELETE /api/reports/shares/<id>`
+- `GET /r/<token>` (público, AllowAny) — incrementa view_count, retorna HTML direto
+
+**Entregas frontend:**
+- Página `/app/goals` com lista, formulário inline e barra de progresso colorida (azul → verde quando atingida)
+- Sidebar inclui "Metas" na seção Dashboards
+- Componente `<ReportActions />` reutilizável nas 3 páginas de dashboard
+  - Dropdown "Exportar" (Excel ou HTML imprimível) — download via fetch autenticado + blob
+  - Diálogo "Compartilhar" — gera link, lista links ativos, copia, revoga
+- `lib/goals.ts` + `lib/reports.ts` com helpers tipados
+
+**Validação:**
+- 36 novos testes backend (`pytest -q apps/goals apps/reports` → 36 passed); suíte total 262 passed, 1 skipped
+- Frontend: `tsc --noEmit` clean, `next build` clean (21 rotas), `vitest` 7/7 ok
+- Smoke endpoints: `/api/goals/`, `/api/reports/export/executive/excel`, `/r/<token>`
+
+**Notas de design:**
+- `format` foi renomeado para `fmt` no kwarg da URL — DRF intercepta `format` como content-negotiation
+- Excel usa "Resumo" como aba principal + abas auxiliares (Top clientes/produtos/etc)
+- HTML usa `@media print` para esconder o botão "Imprimir" no PDF final
+- Token de share usa `secrets.token_urlsafe(32)` (256 bits de entropia)
+- `days_valid` é clampado em [1, 90] no backend
 
 ---
 

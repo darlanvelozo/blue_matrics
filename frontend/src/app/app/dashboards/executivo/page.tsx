@@ -10,6 +10,7 @@ import { EmptyDashboardState } from "@/components/dashboards/empty-state";
 import { FiltersPanel, type DashboardFilters } from "@/components/dashboards/filters-panel";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { PeriodFilter } from "@/components/dashboards/period-filter";
+import { ReportActions } from "@/components/dashboards/report-actions";
 import { getExecutive } from "@/lib/dashboards";
 import { usePeriod } from "@/lib/use-period";
 import { formatCurrencyBRL } from "@/lib/utils";
@@ -58,6 +59,7 @@ function Inner() {
         <div className="flex flex-wrap items-center gap-2">
           <PeriodFilter value={preset} onChange={setPreset} />
           <FiltersPanel filters={filters} onChange={setFilters} showCategory={false} />
+          <ReportActions dashboard="executive" preset={preset} />
         </div>
       </header>
 
