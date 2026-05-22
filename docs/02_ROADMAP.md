@@ -18,7 +18,7 @@
 | 7 | Billing Stripe + planos + trial | ✅ Concluído (mock + Stripe real, UI premium) | 2026-05-22 |
 | 8 | Admin SaaS (MRR, churn, tenants) | ✅ Concluído | 2026-05-22 |
 | 9 | Segurança & LGPD (rate limit, audit, headers) | ✅ Concluído | 2026-05-22 |
-| 10 | Observabilidade & production-ready | ⏳ Pendente | — |
+| 10 | Observabilidade & production-ready | ✅ Concluído | 2026-05-22 |
 
 Legenda: ⏳ pendente · 🚧 em andamento · ✅ concluído · ⚠️ bloqueado
 
