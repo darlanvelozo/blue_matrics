@@ -71,7 +71,8 @@ Veja [`docs/02_ROADMAP.md`](docs/02_ROADMAP.md) para o status detalhado.
 - ✅ Bloco 6 — Insights IA (8 regras + UI premium + widget na home, 155/155 testes)
 - ✅ Bloco 7 — Billing Stripe (3 planos + trial 7d + mock/real adapter + UI, 180/180 testes)
 - ✅ Bloco 8 — Admin SaaS (MRR/churn/tenants + drill-down, 189/189 testes)
-- ⏳ Bloco 9 a 10 — pendentes
+- ✅ Bloco 9 — Segurança & LGPD (audit, rate limit, headers, export/delete, 206/206 testes)
+- ⏳ Bloco 10 — pendente
 
 ### Seed de demo
 

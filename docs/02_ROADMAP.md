@@ -17,7 +17,7 @@
 | 6 | Insights IA + resumo executivo diário | ✅ Concluído (engine de regras; LLM no 6b futuro) | 2026-05-22 |
 | 7 | Billing Stripe + planos + trial | ✅ Concluído (mock + Stripe real, UI premium) | 2026-05-22 |
 | 8 | Admin SaaS (MRR, churn, tenants) | ✅ Concluído | 2026-05-22 |
-| 9 | Segurança & LGPD (rate limit, audit, headers) | ⏳ Pendente | — |
+| 9 | Segurança & LGPD (rate limit, audit, headers) | ✅ Concluído | 2026-05-22 |
 | 10 | Observabilidade & production-ready | ⏳ Pendente | — |
 
 Legenda: ⏳ pendente · 🚧 em andamento · ✅ concluído · ⚠️ bloqueado
