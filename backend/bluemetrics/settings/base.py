@@ -62,6 +62,7 @@ LOCAL_APPS = [
     "apps.billing",
     "apps.admin_saas",
     "apps.security",
+    "apps.observability",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -82,7 +83,14 @@ MIDDLEWARE = [
     "apps.tenants.middleware.TenantContextMiddleware",
     # security headers — sempre depois (aplica em todas as respostas)
     "apps.security.middleware.SecurityHeadersMiddleware",
+    # request_id + structured log (último — captura status final)
+    "apps.observability.middleware.RequestLogMiddleware",
 ]
+
+# ---------------------------------------------------------------------------
+# App version (lido por /api/status)
+# ---------------------------------------------------------------------------
+APP_VERSION = "0.10.0"
 
 ROOT_URLCONF = "bluemetrics.urls"
 
@@ -214,6 +222,8 @@ CONTA_AZUL = {
 # ---------------------------------------------------------------------------
 LOG_LEVEL = env("LOG_LEVEL", default="INFO")
 
+LOG_JSON = env.bool("LOG_JSON", default=False)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -221,15 +231,31 @@ LOGGING = {
         "verbose": {
             "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
         },
+        "json": {
+            "()": "apps.observability.logging.JSONFormatter",
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "verbose",
+            "formatter": "json" if LOG_JSON else "verbose",
         },
     },
     "root": {
         "handlers": ["console"],
         "level": LOG_LEVEL,
     },
+    "loggers": {
+        "bluemetrics.request": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
 }
+
+# ---------------------------------------------------------------------------
+# Sentry (opcional) — só ativa se SENTRY_DSN setada
+# ---------------------------------------------------------------------------
+SENTRY_DSN = env("SENTRY_DSN", default="")
+REDIS_URL = env("REDIS_URL", default="")
