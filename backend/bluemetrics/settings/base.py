@@ -61,6 +61,7 @@ LOCAL_APPS = [
     "apps.insights",
     "apps.billing",
     "apps.admin_saas",
+    "apps.security",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -79,6 +80,8 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # tenant injection — DEVE ficar após Authentication
     "apps.tenants.middleware.TenantContextMiddleware",
+    # security headers — sempre depois (aplica em todas as respostas)
+    "apps.security.middleware.SecurityHeadersMiddleware",
 ]
 
 ROOT_URLCONF = "bluemetrics.urls"

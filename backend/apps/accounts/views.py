@@ -8,6 +8,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from apps.security.models import AuditAction, log_action
+from apps.security.rate_limit import rate_limit
+
 from .serializers import (
     LoginSerializer,
     RegisterSerializer,
@@ -19,6 +22,7 @@ from .serializers import (
 class RegisterView(APIView):
     permission_classes = [AllowAny]
 
+    @rate_limit(key_prefix="auth-register", limit=5, window_seconds=300)
     def post(self, request: Request) -> Response:
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -26,6 +30,14 @@ class RegisterView(APIView):
         user = result["user"]
         tenant = result["tenant"]
         tokens = tokens_for_user(user)
+
+        log_action(
+            action=AuditAction.REGISTER,
+            actor=user, tenant=tenant,
+            metadata={"company": tenant.name},
+            request=request,
+        )
+
         return Response(
             {
                 "user": UserSerializer(user).data,
@@ -47,11 +59,13 @@ class RegisterView(APIView):
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
+    @rate_limit(key_prefix="auth-login", limit=10, window_seconds=60)
     def post(self, request: Request) -> Response:
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
         tokens = tokens_for_user(user)
+        log_action(action=AuditAction.LOGIN, actor=user, request=request)
         return Response(
             {"user": UserSerializer(user).data, "tokens": tokens},
             status=status.HTTP_200_OK,

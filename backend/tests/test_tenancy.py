@@ -25,9 +25,15 @@ class _Widget(TenantScopedModel):
         managed = False  # criamos a tabela na mão no setup do teste
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def widget_table(django_db_setup, django_db_blocker):
-    """Cria a tabela do _Widget no banco de teste."""
+    """
+    Cria a tabela do `_Widget` no banco de teste.
+
+    Scope='session': criamos uma vez e NÃO desfazemos. Se desregistrássemos o
+    model no fim, outras suites que rodam depois e deletam Tenants quebrariam
+    no cascade da FK reversa para uma tabela inexistente.
+    """
     from django.db import connection
 
     with django_db_blocker.unblock():
@@ -35,13 +41,8 @@ def widget_table(django_db_setup, django_db_blocker):
             try:
                 ed.create_model(_Widget)
             except Exception:  # noqa: BLE001, S110
-                pass  # rerun-safe  # já criado em rerun
-        yield
-        with connection.schema_editor() as ed:
-            try:
-                ed.delete_model(_Widget)
-            except Exception:  # noqa: BLE001, S110
                 pass  # rerun-safe
+        yield
 
 
 @pytest.mark.django_db

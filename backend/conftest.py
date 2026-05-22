@@ -74,3 +74,37 @@ def authed_client(api_client, make_user, make_tenant, make_membership):
 def tenant_context():
     """Context manager para forçar tenant em testes não-HTTP."""
     return set_current_tenant
+
+
+# ---------------------------------------------------------------------------
+# `_Widget` é um modelo dinâmico declarado em `tests/test_tenancy.py` para
+# validar o manager `TenantScopedModel`. Como pytest importa todos os módulos
+# de teste no collect, o model fica registrado no app cache do Django desde
+# o início do run — e Django tenta cascatear DELETEs do Tenant para a tabela
+# `tenants__widget` mesmo em testes que NÃO usam o fixture.
+#
+# Solução: criar a tabela em escopo session para garantir que ela exista
+# sempre que algum Tenant for deletado em qualquer teste.
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True, scope="session")
+def _ensure_widget_table(django_db_setup, django_db_blocker):  # noqa: PT004
+    from django.apps import apps as _apps
+    from django.db import connection
+
+    # importa o módulo para registrar o `_Widget` (no-op se já importado)
+    try:
+        import tests.test_tenancy  # noqa: F401
+    except ImportError:
+        return
+
+    try:
+        widget_model = _apps.get_model("tenants", "_Widget")
+    except LookupError:
+        return
+
+    with django_db_blocker.unblock():
+        with connection.schema_editor() as ed:
+            try:
+                ed.create_model(widget_model)
+            except Exception:  # noqa: BLE001, S110
+                pass  # já existe
