@@ -20,6 +20,24 @@ def _bad_request(message: str, code: str = "invalid_request") -> Response:
     )
 
 
+def _int_or_none(v: str | None) -> int | None:
+    if not v:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_filters(request: Request) -> kpis.Filters:
+    return kpis.Filters(
+        salesperson_id=_int_or_none(request.query_params.get("salesperson")),
+        customer_id=_int_or_none(request.query_params.get("customer")),
+        product_id=_int_or_none(request.query_params.get("product")),
+        category_id=_int_or_none(request.query_params.get("category")),
+    )
+
+
 def _parse_params(request: Request):  # type: ignore[no-untyped-def]
     preset = request.query_params.get("preset")
     start = request.query_params.get("start")
@@ -31,7 +49,8 @@ def _parse_params(request: Request):  # type: ignore[no-untyped-def]
         period = resolve_period(preset=preset, start=start, end=end)
     except ValueError as e:
         raise ValueError(f"Datas inválidas: {e}") from e
-    return period, comparison
+    filters = _parse_filters(request)
+    return period, comparison, filters
 
 
 class ExecutiveDashboardView(APIView):
@@ -42,11 +61,12 @@ class ExecutiveDashboardView(APIView):
         if tenant is None:
             return _bad_request("Tenant não encontrado.", "no_tenant")
         try:
-            period, comparison = _parse_params(request)
+            period, comparison, filters = _parse_params(request)
         except ValueError as e:
             return _bad_request(str(e))
-        data = kpis.executive_summary(tenant.id, period, comparison)
+        data = kpis.executive_summary(tenant.id, period, comparison, filters)
         data["has_data"] = kpis.has_any_data(tenant.id)
+        data["filters_applied"] = not filters.is_empty()
         return Response(data)
 
 
@@ -58,11 +78,12 @@ class FinancialDashboardView(APIView):
         if tenant is None:
             return _bad_request("Tenant não encontrado.", "no_tenant")
         try:
-            period, comparison = _parse_params(request)
+            period, comparison, filters = _parse_params(request)
         except ValueError as e:
             return _bad_request(str(e))
-        data = kpis.financial_summary(tenant.id, period, comparison)
+        data = kpis.financial_summary(tenant.id, period, comparison, filters)
         data["has_data"] = kpis.has_any_data(tenant.id)
+        data["filters_applied"] = not filters.is_empty()
         return Response(data)
 
 
@@ -74,9 +95,10 @@ class CommercialDashboardView(APIView):
         if tenant is None:
             return _bad_request("Tenant não encontrado.", "no_tenant")
         try:
-            period, comparison = _parse_params(request)
+            period, comparison, filters = _parse_params(request)
         except ValueError as e:
             return _bad_request(str(e))
-        data = kpis.commercial_summary(tenant.id, period, comparison)
+        data = kpis.commercial_summary(tenant.id, period, comparison, filters)
         data["has_data"] = kpis.has_any_data(tenant.id)
+        data["filters_applied"] = not filters.is_empty()
         return Response(data)

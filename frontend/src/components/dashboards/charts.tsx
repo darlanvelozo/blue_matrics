@@ -87,10 +87,24 @@ interface RevenueDatum {
   sales_count: number;
 }
 
-export function RevenueChart({ data }: { data: RevenueDatum[] }) {
+export function RevenueChart({
+  data,
+  onMonthClick,
+}: {
+  data: RevenueDatum[];
+  onMonthClick?: (ym: string) => void;
+}) {
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+      <AreaChart
+        data={data}
+        margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+        onClick={(e) => {
+          const label = (e as { activeLabel?: string | number } | undefined)?.activeLabel;
+          if (label !== undefined && onMonthClick) onMonthClick(String(label));
+        }}
+        style={onMonthClick ? { cursor: "pointer" } : undefined}
+      >
         <defs>
           <linearGradient id="rev-grad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={palette.primary} stopOpacity={0.5} />
@@ -133,10 +147,24 @@ interface CashflowDatum {
   net: number;
 }
 
-export function CashflowChart({ data }: { data: CashflowDatum[] }) {
+export function CashflowChart({
+  data,
+  onMonthClick,
+}: {
+  data: CashflowDatum[];
+  onMonthClick?: (ym: string) => void;
+}) {
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+      <BarChart
+        data={data}
+        margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+        onClick={(e) => {
+          const label = (e as { activeLabel?: string | number } | undefined)?.activeLabel;
+          if (label !== undefined && onMonthClick) onMonthClick(String(label));
+        }}
+        style={onMonthClick ? { cursor: "pointer" } : undefined}
+      >
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
         <XAxis
           dataKey="month"

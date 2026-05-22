@@ -14,16 +14,55 @@ Regras:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
 from django.db.models import Count, Sum
+from django.db.models.query import QuerySet
 from django.utils import timezone
 
 from apps.sync.models import FinancialEntry, Sale, SaleItem
 
 from .periods import Period, month_buckets
+
+
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Filters:
+    """Filtros opcionais aplicáveis aos KPIs (drill-down/segmentação)."""
+
+    salesperson_id: int | None = None
+    customer_id: int | None = None
+    product_id: int | None = None
+    category_id: int | None = None
+
+    def is_empty(self) -> bool:
+        return not any(
+            (self.salesperson_id, self.customer_id, self.product_id, self.category_id)
+        )
+
+
+_EMPTY = Filters()
+
+
+def _apply_sale_filters(qs: QuerySet, f: Filters) -> QuerySet:
+    if f.salesperson_id:
+        qs = qs.filter(salesperson_id=f.salesperson_id)
+    if f.customer_id:
+        qs = qs.filter(customer_id=f.customer_id)
+    if f.product_id:
+        qs = qs.filter(items__product_id=f.product_id).distinct()
+    return qs
+
+
+def _apply_fin_filters(qs: QuerySet, f: Filters) -> QuerySet:
+    if f.category_id:
+        qs = qs.filter(category_id=f.category_id)
+    if f.customer_id:
+        qs = qs.filter(customer_id=f.customer_id)
+    return qs
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +91,7 @@ def _pct_change(curr: Decimal, prev: Decimal) -> float | None:
 # ===========================================================================
 # KPIs primitivos (1 número, escopado por período)
 # ===========================================================================
-def revenue(tenant_id: int, period: Period) -> Decimal:
+def revenue(tenant_id: int, period: Period, filters: Filters = _EMPTY) -> Decimal:
     """Faturamento = soma das vendas fechadas no período."""
     qs = Sale.unsafe_objects.filter(
         tenant_id=tenant_id,
@@ -60,26 +99,29 @@ def revenue(tenant_id: int, period: Period) -> Decimal:
         issued_at__gte=_aware(period.start),
         issued_at__lte=_aware(period.end, end_of_day=True),
     )
+    qs = _apply_sale_filters(qs, filters)
     return _dec(qs.aggregate(t=Sum("total"))["t"])
 
 
-def num_sales(tenant_id: int, period: Period) -> int:
-    return Sale.unsafe_objects.filter(
+def num_sales(tenant_id: int, period: Period, filters: Filters = _EMPTY) -> int:
+    qs = Sale.unsafe_objects.filter(
         tenant_id=tenant_id,
         status=Sale.Status.CLOSED,
         issued_at__gte=_aware(period.start),
         issued_at__lte=_aware(period.end, end_of_day=True),
-    ).count()
+    )
+    qs = _apply_sale_filters(qs, filters)
+    return qs.count()
 
 
-def avg_ticket(tenant_id: int, period: Period) -> Decimal:
-    n = num_sales(tenant_id, period)
+def avg_ticket(tenant_id: int, period: Period, filters: Filters = _EMPTY) -> Decimal:
+    n = num_sales(tenant_id, period, filters)
     if n == 0:
         return Decimal("0")
-    return revenue(tenant_id, period) / n
+    return revenue(tenant_id, period, filters) / n
 
 
-def cash_in(tenant_id: int, period: Period) -> Decimal:
+def cash_in(tenant_id: int, period: Period, filters: Filters = _EMPTY) -> Decimal:
     """Recebimentos efetivos no período."""
     qs = FinancialEntry.unsafe_objects.filter(
         tenant_id=tenant_id,
@@ -88,10 +130,11 @@ def cash_in(tenant_id: int, period: Period) -> Decimal:
         paid_at__gte=period.start,
         paid_at__lte=period.end,
     )
+    qs = _apply_fin_filters(qs, filters)
     return _dec(qs.aggregate(t=Sum("amount"))["t"])
 
 
-def cash_out(tenant_id: int, period: Period) -> Decimal:
+def cash_out(tenant_id: int, period: Period, filters: Filters = _EMPTY) -> Decimal:
     qs = FinancialEntry.unsafe_objects.filter(
         tenant_id=tenant_id,
         direction=FinancialEntry.Direction.PAYABLE,
@@ -99,11 +142,12 @@ def cash_out(tenant_id: int, period: Period) -> Decimal:
         paid_at__gte=period.start,
         paid_at__lte=period.end,
     )
+    qs = _apply_fin_filters(qs, filters)
     return _dec(qs.aggregate(t=Sum("amount"))["t"])
 
 
-def net_profit(tenant_id: int, period: Period) -> Decimal:
-    return cash_in(tenant_id, period) - cash_out(tenant_id, period)
+def net_profit(tenant_id: int, period: Period, filters: Filters = _EMPTY) -> Decimal:
+    return cash_in(tenant_id, period, filters) - cash_out(tenant_id, period, filters)
 
 
 def overdue_rate(tenant_id: int, *, ref_date: date | None = None) -> float:
@@ -129,25 +173,29 @@ def overdue_rate(tenant_id: int, *, ref_date: date | None = None) -> float:
 # ===========================================================================
 # Séries temporais
 # ===========================================================================
-def revenue_by_month(tenant_id: int, period: Period) -> list[dict[str, Any]]:
+def revenue_by_month(
+    tenant_id: int, period: Period, filters: Filters = _EMPTY,
+) -> list[dict[str, Any]]:
     """Faturamento mensal — usa buckets do período."""
     out = []
     for start, end in month_buckets(period):
         p = Period(start=start, end=end)
         out.append({
-            "month": start.isoformat()[:7],  # YYYY-MM
-            "revenue": _to_float(revenue(tenant_id, p)),
-            "sales_count": num_sales(tenant_id, p),
+            "month": start.isoformat()[:7],
+            "revenue": _to_float(revenue(tenant_id, p, filters)),
+            "sales_count": num_sales(tenant_id, p, filters),
         })
     return out
 
 
-def cashflow_by_month(tenant_id: int, period: Period) -> list[dict[str, Any]]:
+def cashflow_by_month(
+    tenant_id: int, period: Period, filters: Filters = _EMPTY,
+) -> list[dict[str, Any]]:
     out = []
     for start, end in month_buckets(period):
         p = Period(start=start, end=end)
-        ci = cash_in(tenant_id, p)
-        co = cash_out(tenant_id, p)
+        ci = cash_in(tenant_id, p, filters)
+        co = cash_out(tenant_id, p, filters)
         out.append({
             "month": start.isoformat()[:7],
             "in": _to_float(ci),
@@ -160,16 +208,19 @@ def cashflow_by_month(tenant_id: int, period: Period) -> list[dict[str, Any]]:
 # ===========================================================================
 # Top N
 # ===========================================================================
-def top_customers(tenant_id: int, period: Period, *, limit: int = 5) -> list[dict[str, Any]]:
+def top_customers(
+    tenant_id: int, period: Period, *, limit: int = 5, filters: Filters = _EMPTY,
+) -> list[dict[str, Any]]:
+    qs = Sale.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        status=Sale.Status.CLOSED,
+        issued_at__gte=_aware(period.start),
+        issued_at__lte=_aware(period.end, end_of_day=True),
+        customer__isnull=False,
+    )
+    qs = _apply_sale_filters(qs, filters)
     qs = (
-        Sale.unsafe_objects.filter(
-            tenant_id=tenant_id,
-            status=Sale.Status.CLOSED,
-            issued_at__gte=_aware(period.start),
-            issued_at__lte=_aware(period.end, end_of_day=True),
-            customer__isnull=False,
-        )
-        .values("customer_id", "customer__name")
+        qs.values("customer_id", "customer__name")
         .annotate(total=Sum("total"), n=Count("id"))
         .order_by("-total")[:limit]
     )
@@ -184,16 +235,24 @@ def top_customers(tenant_id: int, period: Period, *, limit: int = 5) -> list[dic
     ]
 
 
-def top_products(tenant_id: int, period: Period, *, limit: int = 5) -> list[dict[str, Any]]:
+def top_products(
+    tenant_id: int, period: Period, *, limit: int = 5, filters: Filters = _EMPTY,
+) -> list[dict[str, Any]]:
+    qs = SaleItem.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        sale__status=Sale.Status.CLOSED,
+        sale__issued_at__gte=_aware(period.start),
+        sale__issued_at__lte=_aware(period.end, end_of_day=True),
+        product__isnull=False,
+    )
+    if filters.salesperson_id:
+        qs = qs.filter(sale__salesperson_id=filters.salesperson_id)
+    if filters.customer_id:
+        qs = qs.filter(sale__customer_id=filters.customer_id)
+    if filters.product_id:
+        qs = qs.filter(product_id=filters.product_id)
     qs = (
-        SaleItem.unsafe_objects.filter(
-            tenant_id=tenant_id,
-            sale__status=Sale.Status.CLOSED,
-            sale__issued_at__gte=_aware(period.start),
-            sale__issued_at__lte=_aware(period.end, end_of_day=True),
-            product__isnull=False,
-        )
-        .values("product_id", "product__name")
+        qs.values("product_id", "product__name")
         .annotate(total=Sum("total"), qty=Sum("quantity"))
         .order_by("-total")[:limit]
     )
@@ -208,16 +267,19 @@ def top_products(tenant_id: int, period: Period, *, limit: int = 5) -> list[dict
     ]
 
 
-def sales_by_salesperson(tenant_id: int, period: Period) -> list[dict[str, Any]]:
+def sales_by_salesperson(
+    tenant_id: int, period: Period, filters: Filters = _EMPTY,
+) -> list[dict[str, Any]]:
+    qs = Sale.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        status=Sale.Status.CLOSED,
+        issued_at__gte=_aware(period.start),
+        issued_at__lte=_aware(period.end, end_of_day=True),
+        salesperson__isnull=False,
+    )
+    qs = _apply_sale_filters(qs, filters)
     qs = (
-        Sale.unsafe_objects.filter(
-            tenant_id=tenant_id,
-            status=Sale.Status.CLOSED,
-            issued_at__gte=_aware(period.start),
-            issued_at__lte=_aware(period.end, end_of_day=True),
-            salesperson__isnull=False,
-        )
-        .values("salesperson_id", "salesperson__name")
+        qs.values("salesperson_id", "salesperson__name")
         .annotate(total=Sum("total"), n=Count("id"))
         .order_by("-total")
     )
@@ -235,8 +297,10 @@ def sales_by_salesperson(tenant_id: int, period: Period) -> list[dict[str, Any]]
 # ===========================================================================
 # DRE simplificado por mês (receitas - despesas)
 # ===========================================================================
-def dre_monthly(tenant_id: int, period: Period) -> list[dict[str, Any]]:
-    return cashflow_by_month(tenant_id, period)
+def dre_monthly(
+    tenant_id: int, period: Period, filters: Filters = _EMPTY,
+) -> list[dict[str, Any]]:
+    return cashflow_by_month(tenant_id, period, filters)
 
 
 # ===========================================================================
@@ -248,10 +312,11 @@ def kpi_with_change(
     *,
     metric_fn,
     comparison: str = "prev_period",
+    filters: Filters = _EMPTY,
 ) -> dict[str, Any]:
     prev = period.shift_for_comparison(comparison)
-    curr_val = metric_fn(tenant_id, period)
-    prev_val = metric_fn(tenant_id, prev)
+    curr_val = metric_fn(tenant_id, period, filters)
+    prev_val = metric_fn(tenant_id, prev, filters)
     change_pct = _pct_change(_dec(curr_val), _dec(prev_val))
     return {
         "current": _to_float(curr_val),
@@ -260,45 +325,60 @@ def kpi_with_change(
     }
 
 
-def executive_summary(tenant_id: int, period: Period, comparison: str = "prev_period") -> dict[str, Any]:
+def executive_summary(
+    tenant_id: int,
+    period: Period,
+    comparison: str = "prev_period",
+    filters: Filters = _EMPTY,
+) -> dict[str, Any]:
     return {
         "period": {"start": period.start.isoformat(), "end": period.end.isoformat()},
         "comparison_mode": comparison,
-        "revenue": kpi_with_change(tenant_id, period, metric_fn=revenue, comparison=comparison),
-        "net_profit": kpi_with_change(tenant_id, period, metric_fn=net_profit, comparison=comparison),
-        "avg_ticket": kpi_with_change(tenant_id, period, metric_fn=avg_ticket, comparison=comparison),
-        "num_sales": kpi_with_change(tenant_id, period, metric_fn=num_sales, comparison=comparison),
+        "revenue": kpi_with_change(tenant_id, period, metric_fn=revenue, comparison=comparison, filters=filters),
+        "net_profit": kpi_with_change(tenant_id, period, metric_fn=net_profit, comparison=comparison, filters=filters),
+        "avg_ticket": kpi_with_change(tenant_id, period, metric_fn=avg_ticket, comparison=comparison, filters=filters),
+        "num_sales": kpi_with_change(tenant_id, period, metric_fn=num_sales, comparison=comparison, filters=filters),
         "overdue_rate": overdue_rate(tenant_id),
-        "revenue_by_month": revenue_by_month(tenant_id, period),
-        "top_customers": top_customers(tenant_id, period),
-        "top_products": top_products(tenant_id, period),
+        "revenue_by_month": revenue_by_month(tenant_id, period, filters),
+        "top_customers": top_customers(tenant_id, period, filters=filters),
+        "top_products": top_products(tenant_id, period, filters=filters),
     }
 
 
-def financial_summary(tenant_id: int, period: Period, comparison: str = "prev_period") -> dict[str, Any]:
+def financial_summary(
+    tenant_id: int,
+    period: Period,
+    comparison: str = "prev_period",
+    filters: Filters = _EMPTY,
+) -> dict[str, Any]:
     return {
         "period": {"start": period.start.isoformat(), "end": period.end.isoformat()},
         "comparison_mode": comparison,
-        "cash_in": kpi_with_change(tenant_id, period, metric_fn=cash_in, comparison=comparison),
-        "cash_out": kpi_with_change(tenant_id, period, metric_fn=cash_out, comparison=comparison),
-        "net_profit": kpi_with_change(tenant_id, period, metric_fn=net_profit, comparison=comparison),
+        "cash_in": kpi_with_change(tenant_id, period, metric_fn=cash_in, comparison=comparison, filters=filters),
+        "cash_out": kpi_with_change(tenant_id, period, metric_fn=cash_out, comparison=comparison, filters=filters),
+        "net_profit": kpi_with_change(tenant_id, period, metric_fn=net_profit, comparison=comparison, filters=filters),
         "overdue_rate": overdue_rate(tenant_id),
-        "cashflow_by_month": cashflow_by_month(tenant_id, period),
-        "dre_monthly": dre_monthly(tenant_id, period),
+        "cashflow_by_month": cashflow_by_month(tenant_id, period, filters),
+        "dre_monthly": dre_monthly(tenant_id, period, filters),
     }
 
 
-def commercial_summary(tenant_id: int, period: Period, comparison: str = "prev_period") -> dict[str, Any]:
+def commercial_summary(
+    tenant_id: int,
+    period: Period,
+    comparison: str = "prev_period",
+    filters: Filters = _EMPTY,
+) -> dict[str, Any]:
     return {
         "period": {"start": period.start.isoformat(), "end": period.end.isoformat()},
         "comparison_mode": comparison,
-        "revenue": kpi_with_change(tenant_id, period, metric_fn=revenue, comparison=comparison),
-        "num_sales": kpi_with_change(tenant_id, period, metric_fn=num_sales, comparison=comparison),
-        "avg_ticket": kpi_with_change(tenant_id, period, metric_fn=avg_ticket, comparison=comparison),
-        "revenue_by_month": revenue_by_month(tenant_id, period),
-        "top_customers": top_customers(tenant_id, period, limit=10),
-        "top_products": top_products(tenant_id, period, limit=10),
-        "by_salesperson": sales_by_salesperson(tenant_id, period),
+        "revenue": kpi_with_change(tenant_id, period, metric_fn=revenue, comparison=comparison, filters=filters),
+        "num_sales": kpi_with_change(tenant_id, period, metric_fn=num_sales, comparison=comparison, filters=filters),
+        "avg_ticket": kpi_with_change(tenant_id, period, metric_fn=avg_ticket, comparison=comparison, filters=filters),
+        "revenue_by_month": revenue_by_month(tenant_id, period, filters),
+        "top_customers": top_customers(tenant_id, period, limit=10, filters=filters),
+        "top_products": top_products(tenant_id, period, limit=10, filters=filters),
+        "by_salesperson": sales_by_salesperson(tenant_id, period, filters),
     }
 
 

@@ -89,19 +89,46 @@ export interface CommercialDashboard {
   by_salesperson: BySalesperson[];
 }
 
-function buildQuery(opts: { preset?: Preset; comparison?: Comparison } = {}) {
+export interface DashboardQuery {
+  preset?: Preset;
+  start?: string; // YYYY-MM-DD (custom range; ignora preset se setado)
+  end?: string;
+  comparison?: Comparison;
+  /** Filtros granulares — null/undefined = sem filtro */
+  salesperson?: number | null;
+  customer?: number | null;
+  product?: number | null;
+  category?: number | null;
+}
+
+function buildQuery(opts: DashboardQuery = {}): string {
   const params = new URLSearchParams();
-  if (opts.preset) params.set("preset", opts.preset);
+  if (opts.start && opts.end) {
+    params.set("start", opts.start);
+    params.set("end", opts.end);
+  } else if (opts.preset) {
+    params.set("preset", opts.preset);
+  }
   if (opts.comparison) params.set("comparison", opts.comparison);
+  if (opts.salesperson) params.set("salesperson", String(opts.salesperson));
+  if (opts.customer) params.set("customer", String(opts.customer));
+  if (opts.product) params.set("product", String(opts.product));
+  if (opts.category) params.set("category", String(opts.category));
   return params.toString() ? `?${params}` : "";
 }
 
-export function getExecutive(opts: { preset?: Preset; comparison?: Comparison } = {}) {
-  return apiFetch<ExecutiveDashboard>(`/api/dashboards/executive${buildQuery(opts)}`);
+export function getExecutive(opts: DashboardQuery = {}) {
+  return apiFetch<ExecutiveDashboard & { filters_applied?: boolean }>(
+    `/api/dashboards/executive${buildQuery(opts)}`,
+  );
 }
-export function getFinancial(opts: { preset?: Preset; comparison?: Comparison } = {}) {
-  return apiFetch<FinancialDashboard>(`/api/dashboards/financial${buildQuery(opts)}`);
+export function getFinancial(opts: DashboardQuery = {}) {
+  return apiFetch<FinancialDashboard & { filters_applied?: boolean }>(
+    `/api/dashboards/financial${buildQuery(opts)}`,
+  );
 }
-export function getCommercial(opts: { preset?: Preset; comparison?: Comparison } = {}) {
-  return apiFetch<CommercialDashboard>(`/api/dashboards/commercial${buildQuery(opts)}`);
+export function getCommercial(opts: DashboardQuery = {}) {
+  return apiFetch<CommercialDashboard & { filters_applied?: boolean }>(
+    `/api/dashboards/commercial${buildQuery(opts)}`,
+  );
 }

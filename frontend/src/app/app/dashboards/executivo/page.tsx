@@ -1,10 +1,13 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { Suspense } from "react";
+import Link from "next/link";
+import { Suspense, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RevenueChart } from "@/components/dashboards/charts";
+import { DrillDownModal } from "@/components/dashboards/drilldown-modal";
 import { EmptyDashboardState } from "@/components/dashboards/empty-state";
+import { FiltersPanel, type DashboardFilters } from "@/components/dashboards/filters-panel";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { PeriodFilter } from "@/components/dashboards/period-filter";
 import { getExecutive } from "@/lib/dashboards";
@@ -21,9 +24,21 @@ export default function ExecutiveDashboardPage() {
 
 function Inner() {
   const { preset, setPreset } = usePeriod();
+  const [filters, setFilters] = useState<DashboardFilters>({});
+  const [drillMonth, setDrillMonth] = useState<string | null>(null);
+
+  const customRange = filters.start && filters.end ? { start: filters.start, end: filters.end } : {};
   const { data, isLoading } = useQuery({
-    queryKey: ["dashboards", "executive", preset],
-    queryFn: () => getExecutive({ preset }),
+    queryKey: ["dashboards", "executive", preset, filters],
+    queryFn: () =>
+      getExecutive({
+        ...(customRange.start ? {} : { preset }),
+        ...customRange,
+        comparison: filters.comparison,
+        salesperson: filters.salesperson,
+        customer: filters.customer,
+        product: filters.product,
+      }),
   });
 
   return (
@@ -33,9 +48,17 @@ function Inner() {
           <h1 className="text-2xl font-bold tracking-tight">Dashboard executivo</h1>
           <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
             Visão consolidada do desempenho da empresa.
+            {data?.filters_applied && (
+              <span className="ml-2 inline-flex items-center rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600">
+                filtros ativos
+              </span>
+            )}
           </p>
         </div>
-        <PeriodFilter value={preset} onChange={setPreset} />
+        <div className="flex flex-wrap items-center gap-2">
+          <PeriodFilter value={preset} onChange={setPreset} />
+          <FiltersPanel filters={filters} onChange={setFilters} showCategory={false} />
+        </div>
       </header>
 
       {isLoading ? (
@@ -71,17 +94,33 @@ function Inner() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Faturamento ao longo do tempo</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle>Faturamento ao longo do tempo</CardTitle>
+                <p className="text-[11px] text-[color:var(--muted-foreground)]">
+                  Clique numa barra para detalhes do mês
+                </p>
+              </div>
             </CardHeader>
             <CardContent>
-              <RevenueChart data={data.revenue_by_month} />
+              <RevenueChart
+                data={data.revenue_by_month}
+                onMonthClick={(ym) => setDrillMonth(ym)}
+              />
             </CardContent>
           </Card>
 
           <div className="grid gap-6 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>Top clientes</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Top clientes</CardTitle>
+                  <Link
+                    href="/app/customers"
+                    className="text-xs font-medium text-[color:var(--primary)] hover:underline"
+                  >
+                    Ver todos
+                  </Link>
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <ul className="divide-y divide-[color:var(--border)]">
@@ -91,7 +130,12 @@ function Inner() {
                         <span className="text-xs font-mono text-[color:var(--muted-foreground)]">
                           #{i + 1}
                         </span>
-                        <span className="font-medium">{c.name}</span>
+                        <Link
+                          href={`/app/sales?customer=${c.customer_id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {c.name}
+                        </Link>
                       </span>
                       <span className="font-mono">{formatCurrencyBRL(c.total)}</span>
                     </li>
@@ -107,7 +151,15 @@ function Inner() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Top produtos</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Top produtos</CardTitle>
+                  <Link
+                    href="/app/products"
+                    className="text-xs font-medium text-[color:var(--primary)] hover:underline"
+                  >
+                    Ver todos
+                  </Link>
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <ul className="divide-y divide-[color:var(--border)]">
@@ -133,6 +185,16 @@ function Inner() {
           </div>
         </>
       )}
+
+      <DrillDownModal
+        month={drillMonth}
+        filters={{
+          salesperson: filters.salesperson,
+          customer: filters.customer,
+          product: filters.product,
+        }}
+        onClose={() => setDrillMonth(null)}
+      />
     </div>
   );
 }
