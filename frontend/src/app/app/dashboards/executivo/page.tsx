@@ -1,17 +1,26 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { Suspense } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RevenueChart } from "@/components/dashboards/charts";
 import { EmptyDashboardState } from "@/components/dashboards/empty-state";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { PeriodFilter } from "@/components/dashboards/period-filter";
-import { getExecutive, type Preset } from "@/lib/dashboards";
+import { getExecutive } from "@/lib/dashboards";
+import { usePeriod } from "@/lib/use-period";
 import { formatCurrencyBRL } from "@/lib/utils";
 
 export default function ExecutiveDashboardPage() {
-  const [preset, setPreset] = useState<Preset>("last_12m");
+  return (
+    <Suspense fallback={<Skeleton className="h-96" />}>
+      <Inner />
+    </Suspense>
+  );
+}
+
+function Inner() {
+  const { preset, setPreset } = usePeriod();
   const { data, isLoading } = useQuery({
     queryKey: ["dashboards", "executive", preset],
     queryFn: () => getExecutive({ preset }),
@@ -40,6 +49,7 @@ export default function ExecutiveDashboardPage() {
               label="Faturamento"
               value={data.revenue.current}
               changePct={data.revenue.change_pct}
+              sparkline={data.revenue_by_month.map((m) => ({ value: m.revenue }))}
             />
             <KpiCard
               label="Lucro líquido"

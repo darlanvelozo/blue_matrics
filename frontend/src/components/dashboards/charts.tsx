@@ -24,17 +24,61 @@ const palette = {
 };
 
 function compactBRL(v: number) {
+  if (Math.abs(v) >= 1_000_000) {
+    return `R$ ${(v / 1_000_000).toFixed(1).replace(".", ",")}M`;
+  }
   if (Math.abs(v) >= 1000) {
     return `R$ ${(v / 1000).toFixed(1).replace(".", ",")}k`;
   }
   return `R$ ${v.toFixed(0)}`;
 }
 
-function fmtMonth(ym: string) {
-  // "2026-04" → "abr/26"
+const MONTHS_PT = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+
+function fmtMonthShort(ym: string) {
   const [y, m] = ym.split("-");
-  const months = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-  return `${months[Number(m) - 1]}/${y.slice(2)}`;
+  const abbrev = MONTHS_PT[Number(m) - 1].slice(0, 3);
+  return `${abbrev}/${y.slice(2)}`;
+}
+
+function fmtMonthLong(ym: string) {
+  const [y, m] = ym.split("-");
+  return `${MONTHS_PT[Number(m) - 1]} de ${y}`;
+}
+
+// ---------------------------------------------------------------------------
+// Tooltip rico: mostra mês completo + valor formatado + comparação opcional
+// ---------------------------------------------------------------------------
+function RichTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number; name: string; color?: string; dataKey: string }>;
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0 || !label) return null;
+  return (
+    <div className="rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-2 text-xs shadow-lg">
+      <p className="mb-1 font-semibold capitalize">{fmtMonthLong(String(label))}</p>
+      <ul className="space-y-0.5">
+        {payload.map((p) => (
+          <li key={p.dataKey} className="flex items-center gap-2">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ background: p.color }}
+            />
+            <span className="text-[color:var(--muted-foreground)]">{p.name}:</span>
+            <span className="font-mono font-semibold">{formatCurrencyBRL(p.value)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 interface RevenueDatum {
@@ -56,7 +100,7 @@ export function RevenueChart({ data }: { data: RevenueDatum[] }) {
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
         <XAxis
           dataKey="month"
-          tickFormatter={fmtMonth}
+          tickFormatter={fmtMonthShort}
           stroke={palette.muted}
           fontSize={11}
           tickLine={false}
@@ -69,16 +113,7 @@ export function RevenueChart({ data }: { data: RevenueDatum[] }) {
           axisLine={false}
           tickFormatter={compactBRL}
         />
-        <Tooltip
-          formatter={(v) => formatCurrencyBRL(Number(v))}
-          labelFormatter={(l) => fmtMonth(String(l))}
-          contentStyle={{
-            background: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            fontSize: 12,
-          }}
-        />
+        <Tooltip content={<RichTooltip />} />
         <Area
           dataKey="revenue"
           name="Faturamento"
@@ -105,7 +140,7 @@ export function CashflowChart({ data }: { data: CashflowDatum[] }) {
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
         <XAxis
           dataKey="month"
-          tickFormatter={fmtMonth}
+          tickFormatter={fmtMonthShort}
           stroke={palette.muted}
           fontSize={11}
           tickLine={false}
@@ -118,16 +153,7 @@ export function CashflowChart({ data }: { data: CashflowDatum[] }) {
           axisLine={false}
           tickFormatter={compactBRL}
         />
-        <Tooltip
-          formatter={(v) => formatCurrencyBRL(Number(v))}
-          labelFormatter={(l) => fmtMonth(String(l))}
-          contentStyle={{
-            background: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            fontSize: 12,
-          }}
-        />
+        <Tooltip content={<RichTooltip />} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
         <Bar dataKey="in" name="Entradas" fill={palette.positive} radius={[4, 4, 0, 0]} />
         <Bar dataKey="out" name="Saídas" fill={palette.negative} radius={[4, 4, 0, 0]} />
@@ -143,7 +169,7 @@ export function NetProfitChart({ data }: { data: CashflowDatum[] }) {
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
         <XAxis
           dataKey="month"
-          tickFormatter={fmtMonth}
+          tickFormatter={fmtMonthShort}
           stroke={palette.muted}
           fontSize={11}
           tickLine={false}
@@ -156,16 +182,7 @@ export function NetProfitChart({ data }: { data: CashflowDatum[] }) {
           axisLine={false}
           tickFormatter={compactBRL}
         />
-        <Tooltip
-          formatter={(v) => formatCurrencyBRL(Number(v))}
-          labelFormatter={(l) => fmtMonth(String(l))}
-          contentStyle={{
-            background: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            fontSize: 12,
-          }}
-        />
+        <Tooltip content={<RichTooltip />} />
         <Line
           dataKey="net"
           name="Lucro líquido"
@@ -174,6 +191,39 @@ export function NetProfitChart({ data }: { data: CashflowDatum[] }) {
           dot={false}
         />
       </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sparkline mini-chart para usar dentro de KpiCard
+// ---------------------------------------------------------------------------
+export function Sparkline({
+  data,
+  color = palette.primary,
+  height = 36,
+}: {
+  data: Array<{ value: number }>;
+  color?: string;
+  height?: number;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+        <defs>
+          <linearGradient id={`spark-${color}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity={0.4} />
+            <stop offset="100%" stopColor={color} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <Area
+          dataKey="value"
+          stroke={color}
+          strokeWidth={1.5}
+          fill={`url(#spark-${color})`}
+          isAnimationActive={false}
+        />
+      </AreaChart>
     </ResponsiveContainer>
   );
 }

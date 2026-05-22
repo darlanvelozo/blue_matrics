@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, Minus } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn, formatCurrencyBRL, formatPercent } from "@/lib/utils";
+import { Sparkline } from "./charts";
 
 type ValueFormat = "currency" | "number" | "percent";
 
@@ -10,6 +11,8 @@ export function KpiCard({
   changePct,
   format = "currency",
   positiveIsGood = true,
+  sparkline,
+  sparkColor,
 }: {
   label: string;
   value: number;
@@ -17,6 +20,9 @@ export function KpiCard({
   format?: ValueFormat;
   /** Para inadimplência, "subir" é ruim. */
   positiveIsGood?: boolean;
+  /** Série temporal mensal (12 pontos). Quando passada, mostra sparkline. */
+  sparkline?: Array<{ value: number }>;
+  sparkColor?: string;
 }) {
   const formatted =
     format === "currency"
@@ -29,6 +35,15 @@ export function KpiCard({
   const isUp = showChange && changePct! > 0;
   const isDown = showChange && changePct! < 0;
   const isGood = (isUp && positiveIsGood) || (isDown && !positiveIsGood);
+
+  // cor do sparkline acompanha sentido (bom/ruim) quando possível
+  const sparkFinal =
+    sparkColor ??
+    (showChange
+      ? isGood
+        ? "#16a34a" // green
+        : "#dc2626" // red
+      : "#3b82f6"); // blue neutral
 
   return (
     <Card>
@@ -65,6 +80,11 @@ export function KpiCard({
             <span className="text-[color:var(--muted-foreground)]">sem comparação</span>
           )}
         </div>
+        {sparkline && sparkline.length > 1 && (
+          <div className="mt-3 -mx-1">
+            <Sparkline data={sparkline} color={sparkFinal} height={32} />
+          </div>
+        )}
       </CardContent>
     </Card>
   );

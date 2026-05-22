@@ -160,7 +160,16 @@ class Command(BaseCommand):
             # sazonalidade: dezembro 1.6x, janeiro 0.7x
             month_idx = month_start.month
             seasonal = {12: 1.6, 1: 0.7, 6: 1.15}.get(month_idx, 1.0)
-            target_revenue = Decimal(str(45000 * base_growth * seasonal))
+            # Ruído aleatório p/ variação MoM realista (insights precisam de >10/15%)
+            noise = random.uniform(0.65, 1.35)
+            target_revenue = Decimal(str(45000 * base_growth * seasonal * noise))
+
+            # FORÇA queda no mês passado vs retrasado pra demonstrar o insight de
+            # revenue_drop em dev. Sem isso, é roleta se o seed gera variação >10%.
+            today_real = timezone.now().date()
+            first_last_month = (today_real.replace(day=1) - relativedelta(months=1))
+            if month_start == first_last_month:
+                target_revenue = Decimal(str(float(target_revenue) * 0.78))  # -22%
 
             self._seed_month_sales(tenant, month_start, target_revenue, products, customers, salespeople)
             self._seed_month_financial(tenant, month_start, cats, customers)
@@ -169,8 +178,8 @@ class Command(BaseCommand):
         accumulated = Decimal("0")
         sale_idx = 0
         last_day = (month_start + relativedelta(months=1)) - timedelta(days=1)
-        # cap pra não estourar
-        while accumulated < target_revenue and sale_idx < 200:
+        # cap pra não estourar (1500 suficiente pra realistically atingir target)
+        while accumulated < target_revenue and sale_idx < 1500:
             sale_idx += 1
             day_offset = random.randint(0, (last_day - month_start).days)
             sale_date = datetime.combine(

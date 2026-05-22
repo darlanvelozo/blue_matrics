@@ -14,6 +14,27 @@ from .models import SyncLog
 from .tasks import sync_tenant_task
 
 
+def _humanize_message(raw: str) -> str:
+    """Traduz erros técnicos da Conta Azul para algo legível ao usuário final."""
+    if not raw:
+        return ""
+    r = raw.lower()
+    if " 404" in r or "not found" in r:
+        return (
+            "Esse recurso não está disponível na sua conta da Conta Azul "
+            "(pode depender do plano ou perfil de acesso do app)."
+        )
+    if " 401" in r or "unauthorized" in r:
+        return "Token expirado ou inválido. Reconecte sua Conta Azul."
+    if " 403" in r or "forbidden" in r:
+        return "Sem permissão para acessar esse recurso na Conta Azul."
+    if " 429" in r:
+        return "Conta Azul limitou as requisições. Vamos tentar novamente em breve."
+    if "timeout" in r or "connection" in r:
+        return "Falha de rede ao falar com a Conta Azul. Vamos tentar de novo."
+    return raw[:300]
+
+
 def _serialize_log(log: SyncLog) -> dict:
     return {
         "id": log.id,
@@ -24,7 +45,8 @@ def _serialize_log(log: SyncLog) -> dict:
         "fetched": log.fetched,
         "upserted": log.upserted,
         "errors": log.errors,
-        "message": log.message,
+        "message": _humanize_message(log.message),
+        "raw_message": log.message,  # mantemos pra debug se precisar
     }
 
 

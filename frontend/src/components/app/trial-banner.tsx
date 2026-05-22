@@ -1,17 +1,35 @@
 "use client";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Clock } from "lucide-react";
+import { getSubscription } from "@/lib/billing";
 import type { User } from "@/lib/auth";
 
+/**
+ * Mostra banner só quando a SUBSCRIPTION está em trial.
+ * (Não usa tenant.status — esse campo é separado; se o usuário assina o plano,
+ * subscription vira ACTIVE mas o tenant continua "trial" até alguém atualizar.)
+ *
+ * Aparece nos últimos 7 dias do trial + após expirar.
+ */
 export function TrialBanner({ user }: { user: User }) {
-  const tenant = user.tenant;
-  if (!tenant || tenant.status !== "trial" || !tenant.trial_ends_at) return null;
+  const { data } = useQuery({
+    queryKey: ["billing", "subscription"],
+    queryFn: getSubscription,
+    enabled: !!user.tenant,
+  });
 
-  const end = new Date(tenant.trial_ends_at);
+  const sub = data?.subscription;
+  if (!sub) return null;
+
+  // Só mostra se ainda em trial. Se virou active/canceled/past_due, sai daqui.
+  if (sub.status !== "trialing" || !sub.trial_ends_at) return null;
+
+  const end = new Date(sub.trial_ends_at);
   const now = new Date();
   const days = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-  if (days > 7) return null; // só mostra na última semana
+  if (days > 7) return null;
   const expired = days <= 0;
 
   return (

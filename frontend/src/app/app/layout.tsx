@@ -12,6 +12,7 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     getMe()
@@ -46,11 +47,11 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
 
   return (
     <div className="flex min-h-screen">
-      <AppSidebar />
+      <AppSidebar mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
       <div className="flex min-h-screen flex-1 flex-col">
-        <AppHeader user={user} />
+        <AppHeader user={user} onMenuClick={() => setMobileOpen(true)} />
         <TrialBanner user={user} />
-        <main className="flex-1 overflow-auto p-6">{children}</main>
+        <main className="flex-1 overflow-auto p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );
