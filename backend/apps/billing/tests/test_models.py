@@ -11,20 +11,25 @@ from apps.billing.models import Plan, Subscription
 
 @pytest.mark.django_db
 class TestPlanSeed:
-    def test_three_plans_seeded(self):
+    def test_active_plans_are_monthly_and_annual(self):
         codes = list(Plan.objects.filter(is_active=True).values_list("code", flat=True).order_by("code"))
-        assert codes == ["business", "growth", "starter"]
+        assert codes == ["annual", "monthly"]
 
-    def test_growth_features(self):
-        p = Plan.objects.get(code="growth")
-        assert p.price_monthly == 249
-        assert "Insights por IA" in p.features
+    def test_monthly_plan(self):
+        p = Plan.objects.get(code="monthly")
+        assert p.billing_amount == 499
+        assert p.billing_interval == "month"
+
+    def test_annual_plan(self):
+        p = Plan.objects.get(code="annual")
+        assert p.billing_amount == 4499
+        assert p.billing_interval == "year"
 
 
 @pytest.mark.django_db
 class TestSubscription:
     def _make(self, tenant, **kwargs):
-        plan = Plan.objects.get(code=kwargs.pop("plan_code", "starter"))
+        plan = Plan.objects.get(code=kwargs.pop("plan_code", "monthly"))
         defaults = {
             "tenant": tenant,
             "plan": plan,

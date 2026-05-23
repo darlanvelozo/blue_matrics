@@ -93,10 +93,16 @@ class MockBillingService:
     # ------------------------------------------------------------------
     def _complete(self, subscription: Subscription, plan: Plan, session_id: str) -> None:
         now = timezone.now()
+        period_delta = (
+            relativedelta(years=1)
+            if plan.billing_interval == Plan.BillingInterval.YEAR
+            else relativedelta(months=1)
+        )
+        period_end = now + period_delta
         subscription.plan = plan
         subscription.status = Subscription.Status.ACTIVE
         subscription.current_period_start = now
-        subscription.current_period_end = now + relativedelta(months=1)
+        subscription.current_period_end = period_end
         subscription.cancel_at_period_end = False
         subscription.canceled_at = None
         subscription.stripe_customer_id = f"mock_cus_{subscription.tenant_id}"
@@ -106,11 +112,11 @@ class MockBillingService:
         Invoice.objects.create(
             tenant=subscription.tenant,
             subscription=subscription,
-            amount=plan.price_monthly,
+            amount=plan.billing_amount or plan.price_monthly,
             currency=plan.currency,
             status=Invoice.Status.PAID,
             period_start=now.date(),
-            period_end=(now + relativedelta(months=1)).date(),
+            period_end=period_end.date(),
             paid_at=now,
             hosted_invoice_url=f"#mock-invoice-{session_id}",
             stripe_invoice_id=f"mock_in_{uuid.uuid4().hex[:12]}",
@@ -213,7 +219,7 @@ def get_billing_service() -> BillingService:
 # ---------------------------------------------------------------------------
 # Helpers de domínio (trial, criar sub default)
 # ---------------------------------------------------------------------------
-def ensure_subscription_for_tenant(tenant, *, default_plan_code: str = "starter") -> Subscription:
+def ensure_subscription_for_tenant(tenant, *, default_plan_code: str = "monthly") -> Subscription:
     """
     Cria uma Subscription em trial 7d para o tenant se ainda não tiver.
     Idempotente. Usado no momento do signup.

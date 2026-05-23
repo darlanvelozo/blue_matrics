@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -11,7 +11,6 @@ import {
   FlaskConical,
   Loader2,
   Sparkles,
-  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +21,7 @@ import {
   getSubscription,
   reactivateSubscription,
   startCheckout,
+  type BillingInterval,
   type InvoiceData,
   type Plan,
   type PlanCode,
@@ -81,7 +81,7 @@ function BillingInner() {
           Planos & Assinatura
         </h1>
         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-          Gerencie seu plano, faturas e pagamentos.
+          Plano único com acesso completo. Escolha entre Mensal e Anual.
         </p>
       </header>
 
@@ -138,7 +138,7 @@ function BillingInner() {
 
           <section>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--muted-foreground)]">
-              Trocar de plano
+              Escolha seu ciclo de cobrança
             </h2>
             <PlansGrid
               current={data.subscription.plan.code}
@@ -176,6 +176,9 @@ function CurrentPlanCard({
   reactivating: boolean;
 }) {
   const status = STATUS_LABEL[data.status];
+  const isAnnual = data.plan.billing_interval === "year";
+  const cycleLabel = isAnnual ? "/ano" : "/mês";
+  const displayAmount = data.plan.billing_amount || data.plan.price_monthly;
   return (
     <Card>
       <CardHeader>
@@ -193,8 +196,13 @@ function CurrentPlanCard({
             <CardDescription className="mt-1">{data.plan.description}</CardDescription>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold">{formatCurrencyBRL(data.plan.price_monthly)}</p>
-            <p className="text-xs text-[color:var(--muted-foreground)]">por mês</p>
+            <p className="text-2xl font-bold">{formatCurrencyBRL(displayAmount)}</p>
+            <p className="text-xs text-[color:var(--muted-foreground)]">{cycleLabel.replace("/", "por ")}</p>
+            {isAnnual && (
+              <p className="mt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+                equivale a {formatCurrencyBRL(data.plan.price_monthly)}/mês
+              </p>
+            )}
           </div>
         </div>
       </CardHeader>
@@ -269,28 +277,115 @@ function PlansGrid({
     },
   });
 
+  const [interval, setInterval] = useState<BillingInterval>(
+    current === "annual" ? "year" : "month",
+  );
+
+  const visiblePlans = useMemo(() => {
+    if (!plansData) return [];
+    return plansData.plans
+      .filter((p) => p.code === "monthly" || p.code === "annual")
+      .sort((a, b) => a.sort_order - b.sort_order);
+  }, [plansData]);
+
+  const monthly = visiblePlans.find((p) => p.code === "monthly");
+  const annual = visiblePlans.find((p) => p.code === "annual");
+  const selected = interval === "year" ? annual : monthly;
+
   if (isLoading || !plansData) {
     return (
-      <div className="grid gap-4 sm:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-72" />
+      <div className="grid gap-4 sm:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <Skeleton key={i} className="h-80" />
         ))}
       </div>
     );
   }
 
+  if (!monthly || !annual) {
+    return (
+      <Banner kind="error">
+        <AlertTriangle className="h-4 w-4" />
+        Catálogo de planos incompleto. Execute as migrations de billing.
+      </Banner>
+    );
+  }
+
+  const annualSavings =
+    monthly.billing_amount * 12 - annual.billing_amount; // R$ 1.489 em planos default
+  const annualSavingsPct = Math.round(
+    (annualSavings / (monthly.billing_amount * 12)) * 100,
+  );
+
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      {plansData.plans.map((p) => (
+    <div className="space-y-4">
+      <IntervalToggle
+        value={interval}
+        onChange={setInterval}
+        savingsPct={annualSavingsPct}
+      />
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <PlanCard
-          key={p.code}
-          plan={p}
-          isCurrent={p.code === current}
-          highlight={p.code === "growth"}
-          onSelect={() => onSelect(p.code)}
-          loading={busy && busyCode === p.code}
+          plan={selected!}
+          isCurrent={selected!.code === current}
+          highlight
+          savings={interval === "year" ? annualSavings : 0}
+          onSelect={() => onSelect(selected!.code)}
+          loading={busy && busyCode === selected!.code}
         />
-      ))}
+        <ComparisonAside monthly={monthly} annual={annual} />
+      </div>
+    </div>
+  );
+}
+
+function IntervalToggle({
+  value,
+  onChange,
+  savingsPct,
+}: {
+  value: BillingInterval;
+  onChange: (v: BillingInterval) => void;
+  savingsPct: number;
+}) {
+  return (
+    <div className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--background)] p-1 text-xs font-medium">
+      <button
+        type="button"
+        onClick={() => onChange("month")}
+        className={cn(
+          "rounded-full px-3 py-1.5 transition",
+          value === "month"
+            ? "bg-[color:var(--primary)] text-white shadow"
+            : "text-[color:var(--muted-foreground)] hover:text-[color:var(--foreground)]",
+        )}
+      >
+        Mensal
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("year")}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition",
+          value === "year"
+            ? "bg-[color:var(--primary)] text-white shadow"
+            : "text-[color:var(--muted-foreground)] hover:text-[color:var(--foreground)]",
+        )}
+      >
+        Anual
+        {savingsPct > 0 && (
+          <span
+            className={cn(
+              "rounded-full px-1.5 py-0.5 text-[9px] font-semibold",
+              value === "year"
+                ? "bg-white/20 text-white"
+                : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+            )}
+          >
+            −{savingsPct}%
+          </span>
+        )}
+      </button>
     </div>
   );
 }
@@ -299,15 +394,20 @@ function PlanCard({
   plan,
   isCurrent,
   highlight,
+  savings,
   onSelect,
   loading,
 }: {
   plan: Plan;
   isCurrent: boolean;
   highlight: boolean;
+  savings: number;
   onSelect: () => void;
   loading: boolean;
 }) {
+  const isAnnual = plan.billing_interval === "year";
+  const headlineAmount = plan.billing_amount;
+  const cycleLabel = isAnnual ? "/ano" : "/mês";
   return (
     <Card
       className={cn(
@@ -315,34 +415,46 @@ function PlanCard({
         highlight && "border-blue-500/40 shadow-lg ring-1 ring-blue-500/20",
       )}
     >
-      {highlight && !isCurrent && (
-        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-blue-500 px-2.5 py-0.5 text-[10px] font-semibold text-white shadow">
-          Mais popular
-        </span>
-      )}
       {isCurrent && (
-        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-green-500 px-2.5 py-0.5 text-[10px] font-semibold text-white shadow">
+        <span className="absolute -top-2.5 left-6 rounded-full bg-green-500 px-2.5 py-0.5 text-[10px] font-semibold text-white shadow">
           Plano atual
         </span>
       )}
-      <CardContent className="flex flex-1 flex-col p-5">
-        <h3 className="text-base font-semibold">{plan.name}</h3>
-        <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">{plan.description}</p>
-        <div className="mt-4 flex items-baseline gap-1">
-          <span className="text-3xl font-bold">{formatCurrencyBRL(plan.price_monthly)}</span>
-          <span className="text-xs text-[color:var(--muted-foreground)]">/mês</span>
+      <CardContent className="flex flex-1 flex-col p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{plan.name}</h3>
+            <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">{plan.description}</p>
+          </div>
+          {isAnnual && savings > 0 && (
+            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+              Economiza {formatCurrencyBRL(savings)}
+            </span>
+          )}
         </div>
-        <ul className="mt-4 flex-1 space-y-1.5 text-xs">
+
+        <div className="mt-5 flex items-baseline gap-1">
+          <span className="text-4xl font-bold">{formatCurrencyBRL(headlineAmount)}</span>
+          <span className="text-sm text-[color:var(--muted-foreground)]">{cycleLabel}</span>
+        </div>
+        {isAnnual && (
+          <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">
+            equivale a <strong className="text-[color:var(--foreground)]">{formatCurrencyBRL(plan.price_monthly)}</strong>/mês
+          </p>
+        )}
+
+        <ul className="mt-5 flex-1 space-y-2 text-sm">
           {plan.features.map((f) => (
             <li key={f} className="flex items-start gap-2">
-              <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-blue-500" />
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
               <span>{f}</span>
             </li>
           ))}
         </ul>
+
         <Button
-          className="mt-5"
-          variant={isCurrent ? "outline" : highlight ? "default" : "outline"}
+          className="mt-6"
+          size="lg"
           disabled={isCurrent || loading}
           onClick={onSelect}
         >
@@ -351,8 +463,54 @@ function PlanCard({
           ) : isCurrent ? null : (
             <Sparkles className="mr-2 h-3.5 w-3.5" />
           )}
-          {isCurrent ? "Plano atual" : `Mudar para ${plan.name}`}
+          {isCurrent
+            ? "Plano atual"
+            : isAnnual
+              ? "Assinar Anual"
+              : "Assinar Mensal"}
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ComparisonAside({ monthly, annual }: { monthly: Plan; annual: Plan }) {
+  const yearlyOnMonthly = monthly.billing_amount * 12;
+  const savings = yearlyOnMonthly - annual.billing_amount;
+  return (
+    <Card className="flex flex-col">
+      <CardContent className="flex flex-1 flex-col gap-4 p-5 text-sm">
+        <div>
+          <h4 className="text-sm font-semibold">Por que o Anual?</h4>
+          <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">
+            Pague uma vez e use o ano todo. Sem renovação mensal, sem cartão recusado, sem oscilação de preço.
+          </p>
+        </div>
+        <dl className="space-y-2 border-t border-[color:var(--border)] pt-4">
+          <div className="flex items-center justify-between">
+            <dt className="text-xs text-[color:var(--muted-foreground)]">Mensal × 12</dt>
+            <dd className="font-mono text-xs line-through opacity-60">
+              {formatCurrencyBRL(yearlyOnMonthly)}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-xs text-[color:var(--muted-foreground)]">Anual à vista</dt>
+            <dd className="font-mono text-xs font-semibold">
+              {formatCurrencyBRL(annual.billing_amount)}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--border)] pt-2">
+            <dt className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              Você economiza
+            </dt>
+            <dd className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-400">
+              {formatCurrencyBRL(savings)}
+            </dd>
+          </div>
+        </dl>
+        <div className="rounded-md bg-[color:var(--muted)] px-3 py-2 text-[11px] text-[color:var(--muted-foreground)]">
+          Mesmo acesso, mesmos recursos. A diferença é só o ciclo de cobrança.
+        </div>
       </CardContent>
     </Card>
   );

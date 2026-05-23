@@ -245,35 +245,43 @@ function HowItWorks() {
 }
 
 function Pricing() {
+  const shared = [
+    "Todos os dashboards (Visão geral, Executivo, Financeiro, Comercial)",
+    "Analista IA conversacional com function calling",
+    "Insights automáticos + previsões de caixa",
+    "Curva ABC, RFV e segmentação de clientes",
+    "Sincronização Conta Azul",
+    "Usuários ilimitados",
+    "Suporte por e-mail",
+  ];
   const plans = [
     {
-      name: "Starter",
-      price: "R$ 99",
-      desc: "Para times pequenos que estão começando.",
-      features: ["1 usuário", "Dashboards essenciais", "Sync diário", "Suporte por e-mail"],
-    },
-    {
-      name: "Growth",
-      price: "R$ 249",
-      desc: "Para empresas em crescimento que querem insights.",
-      features: ["Até 5 usuários", "Todos os dashboards", "Sync de hora em hora", "Insights por IA", "Exportação PDF/Excel"],
-      highlight: true,
-    },
-    {
-      name: "Business",
+      name: "Mensal",
       price: "R$ 499",
-      desc: "Para operações que dependem de dados em tempo real.",
-      features: ["Usuários ilimitados", "Sync em tempo real", "Insights premium + assistente IA", "API & Webhooks", "Suporte prioritário"],
+      cycle: "/mês",
+      desc: "Comece já e pague mês a mês. Cancele quando quiser.",
+      features: shared,
+    },
+    {
+      name: "Anual",
+      price: "R$ 4.499",
+      cycle: "/ano",
+      desc: "Economize ~25% pagando uma vez ao ano (equivale a R$ 374,92/mês).",
+      features: [...shared, "Economia de R$ 1.489/ano", "Pagamento único anual"],
+      highlight: true,
     },
   ];
   return (
     <section id="planos" className="border-b border-[color:var(--border)] py-20">
-      <div className="mx-auto max-w-6xl px-4">
+      <div className="mx-auto max-w-5xl px-4">
         <SectionHeader
           eyebrow="Planos"
-          title="Preço simples. Trial grátis de 7 dias em qualquer plano."
+          title="Um plano. Dois ciclos. Trial grátis de 7 dias."
         />
-        <div className="mt-12 grid gap-6 md:grid-cols-3">
+        <p className="mx-auto mt-3 max-w-2xl text-center text-sm text-[color:var(--muted-foreground)]">
+          Sem limites, sem letrinhas miúdas — acesso completo em qualquer ciclo.
+        </p>
+        <div className="mt-12 grid gap-6 md:grid-cols-2">
           {plans.map((p) => (
             <Card
               key={p.name}
@@ -285,7 +293,7 @@ function Pricing() {
             >
               {p.highlight && (
                 <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-500 px-3 py-1 text-xs font-semibold text-white shadow">
-                  Mais popular
+                  Melhor custo-benefício
                 </span>
               )}
               <CardContent className="p-6">
@@ -293,7 +301,7 @@ function Pricing() {
                 <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">{p.desc}</p>
                 <div className="mt-6 flex items-baseline gap-1">
                   <span className="text-4xl font-bold tracking-tight">{p.price}</span>
-                  <span className="text-sm text-[color:var(--muted-foreground)]">/mês</span>
+                  <span className="text-sm text-[color:var(--muted-foreground)]">{p.cycle}</span>
                 </div>
                 <ul className="mt-6 space-y-2 text-sm">
                   {p.features.map((f) => (

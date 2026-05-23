@@ -1,6 +1,14 @@
 import { apiFetch } from "./api";
 
-export type PlanCode = "starter" | "growth" | "business";
+export type PlanCode =
+  | "monthly"
+  | "annual"
+  // Legacy (mantidos pra retro-compatibilidade com subs antigas)
+  | "starter"
+  | "growth"
+  | "business";
+
+export type BillingInterval = "month" | "year";
 
 export type SubscriptionStatus =
   | "trialing"
@@ -16,6 +24,8 @@ export interface Plan {
   name: string;
   description: string;
   price_monthly: number;
+  billing_amount: number;
+  billing_interval: BillingInterval;
   currency: string;
   max_users: number;
   features: string[];
