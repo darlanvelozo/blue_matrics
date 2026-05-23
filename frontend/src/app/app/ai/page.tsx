@@ -1,7 +1,8 @@
 "use client";
 import { useMutation } from "@tanstack/react-query";
-import { Loader2, Send, Sparkles, User, Wand2 } from "lucide-react";
+import { AlertCircle, Copy, Loader2, RefreshCw, Send, Sparkles, User, Wand2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { BlueprintRender } from "@/components/ai/blueprint-render";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import { ApiError } from "@/lib/api";
 import {
   askAi,
   type AnalysisBlueprint,
+  type AskResponse,
   type ChatMessage,
 } from "@/lib/ai";
 
@@ -25,7 +27,7 @@ export default function AiPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [blueprint, setBlueprint] = useState<AnalysisBlueprint | null>(null);
-  const [usedLlm, setUsedLlm] = useState(false);
+  const [lastResp, setLastResp] = useState<AskResponse | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const ask = useMutation({
@@ -37,10 +39,14 @@ export default function AiPage() {
         { role: "assistant", content: resp.answer },
       ]);
       setBlueprint(resp.blueprint);
-      setUsedLlm(resp.used_llm);
+      setLastResp(resp);
       setDraft("");
     },
   });
+
+  const usedLlm = lastResp?.used_llm ?? false;
+  const llmError = lastResp?.llm_error;
+  const suggestions = lastResp?.suggestions ?? SUGGESTIONS;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -64,13 +70,50 @@ export default function AiPage() {
         </h1>
         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
           Pergunte sobre seus dados financeiros. A resposta vem em texto + tabelas + gráficos.
-          {!usedLlm && messages.length > 0 && (
+          {messages.length > 0 && usedLlm && (
+            <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] font-medium text-purple-700">
+              <Wand2 className="h-2.5 w-2.5" /> IA real ({lastResp?.provider})
+            </span>
+          )}
+          {messages.length > 0 && !usedLlm && (
             <span className="ml-2 inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-              modo demo (sem LLM)
+              modo demo
             </span>
           )}
         </p>
       </header>
+
+      {llmError === "quota_exceeded" && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">IA temporariamente em modo demo</p>
+            <p className="mt-0.5 text-xs">
+              Conta OpenAI sem créditos. Adicione saldo em{" "}
+              <a
+                href="https://platform.openai.com/account/billing"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium underline"
+              >
+                platform.openai.com
+              </a>{" "}
+              e tente novamente.
+            </p>
+          </div>
+        </div>
+      )}
+      {llmError === "rate_limited" && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">Limite de requisições atingido</p>
+            <p className="mt-0.5 text-xs">
+              Espere alguns segundos e tente de novo.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_400px]">
         {/* Painel principal: dashboard dinâmico */}
@@ -130,6 +173,25 @@ export default function AiPage() {
               {messages.map((m, i) => (
                 <Bubble key={i} message={m} />
               ))}
+              {/* Sugestões contextuais após resposta */}
+              {messages.length > 0 && !ask.isPending && lastResp && (
+                <div className="space-y-1.5 pt-1">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--muted-foreground)]">
+                    Perguntas relacionadas
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {suggestions.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => submit(s)}
+                        className="rounded-full border border-[color:var(--border)] bg-[color:var(--background)] px-2.5 py-1 text-[11px] transition hover:border-[color:var(--primary)]/40 hover:bg-[color:var(--muted)]"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {ask.isPending && (
                 <Bubble
                   message={{ role: "assistant", content: "Analisando…" }}
@@ -196,8 +258,27 @@ function Bubble({ message, pending }: { message: ChatMessage; pending?: boolean 
           <span className="inline-flex items-center gap-2 text-[color:var(--muted-foreground)]">
             <Loader2 className="h-3 w-3 animate-spin" /> {message.content}
           </span>
-        ) : (
+        ) : isUser ? (
           <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+        ) : (
+          <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed
+                          [&_p]:my-1.5 [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:list-disc
+                          [&_strong]:font-semibold [&_strong]:text-[color:var(--foreground)]
+                          [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm
+                          [&_code]:rounded [&_code]:bg-[color:var(--background)]
+                          [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[11px]">
+            <ReactMarkdown>{message.content}</ReactMarkdown>
+            {!isUser && (
+              <button
+                type="button"
+                onClick={() => navigator.clipboard?.writeText(message.content)}
+                className="mt-2 inline-flex items-center gap-1 text-[10px] text-[color:var(--muted-foreground)] hover:text-[color:var(--primary)]"
+                title="Copiar resposta"
+              >
+                <Copy className="h-3 w-3" /> Copiar
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

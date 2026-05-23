@@ -37,6 +37,8 @@ export interface AskResponse {
   blueprint: AnalysisBlueprint;
   used_llm: boolean;
   provider: string;
+  llm_error?: "quota_exceeded" | "rate_limited" | "unknown" | null;
+  suggestions: string[];
 }
 
 export interface AnalyzeResponse {

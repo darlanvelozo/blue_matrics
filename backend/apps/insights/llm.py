@@ -190,21 +190,32 @@ def enrich(insight: dict, kpis_snapshot: dict) -> EnrichmentResult:
 
 
 # ---------------------------------------------------------------------------
-def build_kpis_snapshot(tenant_id: int) -> dict[str, Any]:
-    """Snapshot compacto e legível dos KPIs do tenant para alimentar a LLM."""
+def build_kpis_snapshot(tenant_id: int, *, use_cache: bool = True) -> dict[str, Any]:
+    """Snapshot compacto e legível dos KPIs do tenant para alimentar a LLM.
+
+    Cache: Redis 60s por tenant — KPIs financeiros mudam apenas em sync,
+    e snapshot é caro (~12-15 queries SQL). Cache hit ~5ms vs miss ~200ms.
+    """
     from datetime import timedelta
 
+    from django.core.cache import cache
     from django.utils import timezone
 
     from apps.analytics import kpis as kpi_mod
     from apps.analytics.periods import Period
+
+    cache_key = f"biazul:llm_snapshot:{tenant_id}"
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     today = timezone.now().date()
     last_30 = Period(start=today - timedelta(days=30), end=today)
     last_90 = Period(start=today - timedelta(days=90), end=today)
     last_12m = Period(start=today - timedelta(days=365), end=today)
 
-    return {
+    snapshot = {
         "today": today.isoformat(),
         "last_30d": {
             "cash_in": float(kpi_mod.cash_in(tenant_id, last_30)),
@@ -241,3 +252,12 @@ def build_kpis_snapshot(tenant_id: int) -> dict[str, Any]:
             "upcoming_receivables_30d": kpi_mod.upcoming_receivables(tenant_id, days=30),
         },
     }
+    if use_cache:
+        cache.set(cache_key, snapshot, 60)  # 60s
+    return snapshot
+
+
+def invalidate_snapshot_cache(tenant_id: int) -> None:
+    """Limpa cache do snapshot — chame após sync ou alteração de dados."""
+    from django.core.cache import cache
+    cache.delete(f"biazul:llm_snapshot:{tenant_id}")

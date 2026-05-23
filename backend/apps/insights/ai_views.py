@@ -353,18 +353,83 @@ def run_analysis(tenant_id: int, intent: str, *, days: int, limit: int = 10) -> 
 # Chamadas LLM (chat livre)
 # ---------------------------------------------------------------------------
 CHAT_SYSTEM_PROMPT = (
-    "Você é o assistente financeiro do BI AZUL, especializado em análise de "
-    "dados de PMEs brasileiras que usam a Conta Azul. Responda em português "
-    "brasileiro, com tom claro e direto.\n"
-    "Você recebe (a) a pergunta do usuário e (b) um JSON com o snapshot atual "
-    "dos KPIs e dados agregados do negócio. Sua resposta deve:\n"
-    "  1. Citar apenas números que estejam no snapshot — NÃO invente.\n"
-    "  2. Usar formato monetário brasileiro (R$ 1.234,56).\n"
-    "  3. Ser objetiva (2 a 5 parágrafos curtos).\n"
-    "  4. Terminar com 1-3 recomendações práticas quando fizer sentido.\n"
-    "  5. Quando não houver dados suficientes, dizer isso claramente.\n"
-    "Não use emojis. Não use markdown pesado — texto simples ou listas curtas."
+    "Você é o copiloto financeiro do BI AZUL, analista sênior para PMEs "
+    "brasileiras que usam a Conta Azul ERP.\n"
+    "\n"
+    "REGRAS (siga sempre):\n"
+    "• Use APENAS números do snapshot — nunca invente valores.\n"
+    "• Formato monetário: R$ 1.234,56 (vírgula decimal, ponto milhar).\n"
+    "• Tom: direto, prático, sem jargão técnico. Trate o usuário como dono do negócio.\n"
+    "• Estrutura: parágrafo de diagnóstico → bullets de fatos → bullets de recomendações.\n"
+    "• Use Markdown leve: **negrito** para números-chave, listas com '- '.\n"
+    "• Se a pergunta exigir dado fora do snapshot, diga claramente 'não tenho esse dado'.\n"
+    "• Quando relevante, contraste valores (mês atual vs anterior, % de variação).\n"
+    "• Limite: 4-6 frases na análise, máx 4 recomendações.\n"
+    "\n"
+    "Não use emojis nem termos de marketing ('incrível', 'fantástico'). Não termine "
+    "com convite para perguntas adicionais."
 )
+
+
+class LLMRateLimited(Exception):
+    """Provedor LLM retornou 429."""
+
+
+class LLMQuotaExceeded(Exception):
+    """Conta sem créditos (insufficient_quota)."""
+
+
+# ---------------------------------------------------------------------------
+# Sugestões de follow-up contextuais (após cada resposta)
+# ---------------------------------------------------------------------------
+_FOLLOWUP_BY_INTENT = {
+    "summary": [
+        "Quais foram minhas 10 maiores despesas no último trimestre?",
+        "Como está minha inadimplência?",
+        "Tenho saldo pra pagar tudo nos próximos 30 dias?",
+    ],
+    "top_expenses": [
+        "Qual fornecedor está concentrando esses pagamentos?",
+        "Onde posso cortar despesas?",
+        "Comparado ao mês anterior, as despesas subiram ou caíram?",
+    ],
+    "top_revenues": [
+        "Quem são meus principais clientes?",
+        "Qual categoria está crescendo mais?",
+        "Quanto faturei nos últimos 90 dias?",
+    ],
+    "top_suppliers": [
+        "Quanto pago em juros e impostos?",
+        "Quais fornecedores tenho prazo a vencer?",
+        "Como reduzir custo com fornecedores?",
+    ],
+    "top_customers": [
+        "Quais clientes estão inadimplentes?",
+        "Tenho clientes que pararam de comprar?",
+        "Top 10 clientes por valor",
+    ],
+    "cashflow": [
+        "Meu caixa vai ficar negativo?",
+        "Qual o saldo projetado para 30 dias?",
+        "Tendência de receita vs despesa",
+    ],
+    "upcoming": [
+        "Como reduzir contas a pagar próximos 30 dias?",
+        "Tenho recebimentos previstos?",
+        "Vou ter caixa pra honrar tudo?",
+    ],
+    "overdue": [
+        "Quanto perco com inadimplência?",
+        "Quais clientes estão em risco?",
+        "Como melhorar minha cobrança?",
+    ],
+}
+
+
+def _build_followups(intent: str, blueprint: dict) -> list[str]:
+    """Retorna 3 sugestões contextuais de próxima pergunta."""
+    base = _FOLLOWUP_BY_INTENT.get(intent, _FOLLOWUP_BY_INTENT["summary"])
+    return list(base[:3])
 
 
 def _chat_openai(question: str, snapshot: dict, history: list[dict]) -> str:
@@ -378,29 +443,57 @@ def _chat_openai(question: str, snapshot: dict, history: list[dict]) -> str:
     messages.append({
         "role": "user",
         "content": (
-            f"## Pergunta\n{question}\n\n"
-            f"## Snapshot do tenant\n```json\n"
-            f"{json.dumps(snapshot, ensure_ascii=False, indent=2, default=str)}\n```"
+            f"PERGUNTA:\n{question}\n\n"
+            f"SNAPSHOT (use APENAS esses números):\n"
+            f"{json.dumps(snapshot, ensure_ascii=False, default=str)}"
         ),
     })
     payload = {
         "model": settings.OPENAI_MODEL,
         "temperature": 0.3,
+        "max_tokens": 700,
         "messages": messages,
     }
     url = f"{settings.OPENAI_BASE_URL.rstrip('/')}/chat/completions"
-    with httpx.Client(timeout=60.0) as http:
-        resp = http.post(
-            url,
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        resp.raise_for_status()
-        body = resp.json()
-    return body["choices"][0]["message"]["content"].strip()
+
+    # Retry com backoff em 429/5xx
+    delays = [0, 1.5, 4.0]
+    last_exc: Exception | None = None
+    for attempt, delay in enumerate(delays):
+        if delay:
+            import time
+            time.sleep(delay)
+        try:
+            with httpx.Client(timeout=45.0) as http:
+                resp = http.post(
+                    url,
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+            if resp.status_code == 429:
+                err = resp.json().get("error", {}) if resp.headers.get("content-type", "").startswith("application/json") else {}
+                if err.get("type") == "insufficient_quota":
+                    raise LLMQuotaExceeded(err.get("message", "Sem créditos"))
+                last_exc = LLMRateLimited(f"429 (tentativa {attempt + 1})")
+                continue
+            if 500 <= resp.status_code < 600:
+                last_exc = httpx.HTTPStatusError(
+                    f"OpenAI {resp.status_code}", request=resp.request, response=resp,
+                )
+                continue
+            resp.raise_for_status()
+            body = resp.json()
+            return body["choices"][0]["message"]["content"].strip()
+        except (httpx.TimeoutException, httpx.NetworkError) as e:
+            last_exc = e
+            continue
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("OpenAI: falha sem detalhe após retries")
 
 
 def _chat_anthropic(question: str, snapshot: dict, history: list[dict]) -> str:
@@ -517,11 +610,21 @@ class AskView(APIView):
             elif provider == "anthropic" and settings.ANTHROPIC_API_KEY:
                 answer = _chat_anthropic(question, snapshot, history)
                 used_llm = True
+        except LLMQuotaExceeded as e:
+            logger.warning("LLM sem créditos: %s", e)
+            llm_error = "quota_exceeded"
+        except LLMRateLimited as e:
+            logger.warning("LLM rate limited: %s", e)
+            llm_error = "rate_limited"
         except Exception as e:  # noqa: BLE001
             logger.warning("chat LLM falhou (%s): %s", provider, e)
+            llm_error = "unknown"
 
         if not used_llm:
             answer = _demo_answer(question, blueprint)
+
+        # Sugestões contextuais de follow-up (sempre úteis)
+        suggestions = _build_followups(intent, blueprint)
 
         return Response({
             "answer": answer,
@@ -529,6 +632,8 @@ class AskView(APIView):
             "blueprint": blueprint,
             "used_llm": used_llm,
             "provider": provider if used_llm else "demo",
+            "llm_error": locals().get("llm_error"),
+            "suggestions": suggestions,
         })
 
 
