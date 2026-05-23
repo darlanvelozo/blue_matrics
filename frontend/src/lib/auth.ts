@@ -54,3 +54,23 @@ export async function getMe(): Promise<User> {
 export function logout() {
   tokens.clear();
 }
+
+export async function requestPasswordReset(email: string): Promise<{ detail: string }> {
+  return apiFetch("/api/auth/password-reset", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+    skipAuth: true,
+  });
+}
+
+export async function confirmPasswordReset(payload: {
+  uid: string;
+  token: string;
+  new_password: string;
+}): Promise<{ detail: string }> {
+  return apiFetch("/api/auth/password-reset/confirm", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    skipAuth: true,
+  });
+}

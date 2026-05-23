@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 from django.conf import settings
 from django.utils import timezone
+from apps.security.rate_limit import rate_limit
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -938,6 +939,9 @@ class AskView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    # Throttle: 30 perguntas / 5 minutos por usuário. Protege a quota OpenAI
+    # de abuso (loops, scripts) sem atrapalhar uso humano normal.
+    @rate_limit(key_prefix="ai-ask", limit=30, window_seconds=300)
     def post(self, request: Request) -> Response:
         tenant = get_request_tenant(request)
         if tenant is None:

@@ -92,6 +92,25 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Recebe e-mail, retorna sempre 200 (não revela se conta existe)."""
+    email = serializers.EmailField()
+
+    def validate_email(self, value: str) -> str:
+        return value.lower().strip()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """Valida uid + token (PasswordResetTokenGenerator do Django) e troca a senha."""
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_new_password(self, value: str) -> str:
+        validate_password(value)
+        return value
+
+
 class UserSerializer(serializers.ModelSerializer):
     tenant = serializers.SerializerMethodField()
 

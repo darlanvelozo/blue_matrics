@@ -66,6 +66,7 @@ LOCAL_APPS = [
     "apps.explorer",
     "apps.goals",
     "apps.reports",
+    "apps.notifications",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -294,4 +295,49 @@ LOGGING = {
 # Sentry (opcional) — só ativa se SENTRY_DSN setada
 # ---------------------------------------------------------------------------
 SENTRY_DSN = env("SENTRY_DSN", default="")
+SENTRY_ENVIRONMENT = env("SENTRY_ENVIRONMENT", default="production")
+SENTRY_TRACES_SAMPLE_RATE = env.float("SENTRY_TRACES_SAMPLE_RATE", default=0.1)
+SENTRY_PROFILES_SAMPLE_RATE = env.float("SENTRY_PROFILES_SAMPLE_RATE", default=0.0)
+
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.celery import CeleryIntegration
+        from sentry_sdk.integrations.django import DjangoIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            environment=SENTRY_ENVIRONMENT,
+            release=env("APP_VERSION", default=""),
+            integrations=[
+                DjangoIntegration(),
+                CeleryIntegration(),
+                LoggingIntegration(event_level=None),  # breadcrumbs only
+            ],
+            traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+            profiles_sample_rate=SENTRY_PROFILES_SAMPLE_RATE,
+            send_default_pii=False,
+        )
+    except ImportError:
+        # SDK não instalado — segue sem observability
+        pass
+
 REDIS_URL = env("REDIS_URL", default="")
+
+# ---------------------------------------------------------------------------
+# Email — provider plugável via SMTP (Resend, SES, Mailgun, Gmail, etc.)
+# ---------------------------------------------------------------------------
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND",
+    default="django.core.mail.backends.console.EmailBackend",
+)
+EMAIL_HOST = env("EMAIL_HOST", default="")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+EMAIL_USE_SSL = env.bool("EMAIL_USE_SSL", default=False)
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=15)
+DEFAULT_FROM_EMAIL = env("EMAIL_FROM", default="BI AZUL <no-reply@biazul.com>")
+SERVER_EMAIL = DEFAULT_FROM_EMAIL  # erros do Django
