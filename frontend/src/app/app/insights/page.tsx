@@ -3,13 +3,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Brain,
-  CheckCircle2,
+  Building2,
+  CalendarClock,
   Info,
   Loader2,
+  PieChart,
   Sparkles,
   TrendingDown,
   TrendingUp,
   Users,
+  Wand2,
   X,
   XCircle,
   type LucideIcon,
@@ -39,6 +42,11 @@ const KIND_ICON: Record<InsightKind, LucideIcon> = {
   overdue_high: AlertTriangle,
   cash_negative: XCircle,
   seasonality: Info,
+  top_expense_category: PieChart,
+  top_revenue_category: PieChart,
+  upcoming_payables: CalendarClock,
+  supplier_concentration: Building2,
+  cash_in_trend: TrendingUp,
 };
 
 const SEVERITY_STYLE: Record<
@@ -80,8 +88,16 @@ export default function InsightsPage() {
   });
 
   const generateMutation = useMutation({
-    mutationFn: generateInsights,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["insights"] }),
+    mutationFn: (opts: { enrich?: boolean } = {}) => generateInsights(opts),
+    onSuccess: async () => {
+      // Invalida E força refetch imediato (sem esperar staleTime).
+      await qc.invalidateQueries({ queryKey: ["insights"] });
+      await qc.refetchQueries({ queryKey: ["insights"], type: "active" });
+      // Scroll suave pro topo da lista para o usuário ver os insights
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    },
   });
 
   const dismissMutation = useMutation({
@@ -107,26 +123,53 @@ export default function InsightsPage() {
             {data?.unread ? ` ${data.unread} não lido${data.unread > 1 ? "s" : ""}.` : ""}
           </p>
         </div>
-        <Button
-          onClick={() => generateMutation.mutate()}
-          disabled={generateMutation.isPending}
-        >
-          {generateMutation.isPending ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Sparkles className="mr-2 h-4 w-4" />
-          )}
-          Gerar insights agora
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => generateMutation.mutate({ enrich: false })}
+            disabled={generateMutation.isPending}
+          >
+            {generateMutation.isPending && generateMutation.variables?.enrich === false ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="mr-2 h-4 w-4" />
+            )}
+            Gerar com regras
+          </Button>
+          <Button
+            onClick={() => generateMutation.mutate({ enrich: true })}
+            disabled={generateMutation.isPending}
+          >
+            {generateMutation.isPending && generateMutation.variables?.enrich === true ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Wand2 className="mr-2 h-4 w-4" />
+            )}
+            Gerar com IA
+          </Button>
+        </div>
       </header>
 
       {generateMutation.error instanceof ApiError && (
         <Banner kind="error">{generateMutation.error.message}</Banner>
       )}
       {generateMutation.isSuccess && (
-        <Banner kind="success">
-          {generateMutation.data.stats.created} novo(s), {generateMutation.data.stats.updated}{" "}
-          atualizado(s).
+        <Banner kind={generateMutation.data.llm.requested && !generateMutation.data.llm.enabled ? "warning" : "success"}>
+          {generateMutation.data.stats.created} novo(s),{" "}
+          {generateMutation.data.stats.updated} atualizado(s).
+          {generateMutation.data.llm.requested && generateMutation.data.llm.enabled && (
+            <>
+              {" "}
+              <strong>{generateMutation.data.llm.enriched ?? 0}</strong> enriquecido(s) com IA.
+            </>
+          )}
+          {generateMutation.data.llm.requested && !generateMutation.data.llm.enabled && (
+            <>
+              {" "}
+              <em>IA não configurada</em> — preencha <code>OPENAI_API_KEY</code> e{" "}
+              <code>INSIGHT_LLM_PROVIDER=openai</code> no .env para ativar.
+            </>
+          )}
         </Banner>
       )}
 
@@ -194,13 +237,34 @@ function InsightCard({
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <h3 className="font-semibold leading-tight">{insight.title}</h3>
-              <span
-                className={`inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[10px] font-medium ${style.badge}`}
-              >
-                {style.badgeLabel}
+              <span className="flex shrink-0 items-center gap-1.5">
+                {insight.generated_by === "llm" && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] font-medium text-purple-600">
+                    <Wand2 className="h-3 w-3" /> IA
+                  </span>
+                )}
+                <span
+                  className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-medium ${style.badge}`}
+                >
+                  {style.badgeLabel}
+                </span>
               </span>
             </div>
             <p className="text-sm text-[color:var(--muted-foreground)]">{insight.narrative}</p>
+            {Array.isArray(insight.data?.recommendations) &&
+              (insight.data.recommendations as string[]).length > 0 && (
+                <ul className="mt-2 space-y-1 rounded-md border border-[color:var(--border)]/60 bg-[color:var(--muted)]/40 px-3 py-2 text-xs">
+                  <li className="font-medium text-[color:var(--muted-foreground)]">
+                    Recomendações
+                  </li>
+                  {(insight.data.recommendations as string[]).map((r, i) => (
+                    <li key={i} className="flex gap-2 text-[color:var(--foreground)]">
+                      <span className="text-purple-500">›</span>
+                      <span>{r}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             <p className="text-xs text-[color:var(--muted-foreground)]/70">
               {new Date(insight.created_at).toLocaleString("pt-BR", {
                 day: "2-digit",
@@ -241,17 +305,23 @@ function Banner({
   kind,
   children,
 }: {
-  kind: "success" | "error";
+  kind: "success" | "error" | "warning";
   children: React.ReactNode;
 }) {
   const cls =
     kind === "success"
       ? "border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300"
+      : kind === "warning"
+      ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
       : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300";
   return (
     <div className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm ${cls}`}>
-      {kind === "success" ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-      {children}
+      {kind === "success" ? (
+        <Sparkles className="h-4 w-4" />
+      ) : (
+        <AlertTriangle className="h-4 w-4" />
+      )}
+      <span>{children}</span>
     </div>
   );
 }

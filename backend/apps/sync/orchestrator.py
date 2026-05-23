@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable
 from datetime import timedelta
+from decimal import Decimal
 from typing import Any
 
 from django.db import transaction
@@ -31,6 +32,7 @@ from apps.tenants.context import set_current_tenant
 
 from . import mappers
 from .client import ContaAzulAPIError, ContaAzulClient
+from .mappers import _to_decimal
 from .models import (
     Category,
     Customer,
@@ -55,21 +57,21 @@ RESOURCE_ENDPOINTS: dict[str, tuple[str, str]] = {
     "categories": ("/categorias", RawPayload.Resource.CATEGORIES),
     "customers": ("/pessoa", RawPayload.Resource.CUSTOMERS),  # singular!
     "products": ("/produtos", RawPayload.Resource.PRODUCTS),
-    # opt-out: paths reais variam por plano/perfil do app. Não derrubam o sync.
-    "salespeople": ("/vendedor", RawPayload.Resource.SALESPEOPLE),
-    "sales": ("/venda", RawPayload.Resource.SALES),
+    "salespeople": ("/venda/vendedores", RawPayload.Resource.SALESPEOPLE),
+    "sales": ("/venda/busca", RawPayload.Resource.SALES),
     "financial_receivables": (
-        "/financeiro/contas-a-receber",
+        "/financeiro/eventos-financeiros/contas-a-receber/buscar",
         RawPayload.Resource.FINANCIAL_RECEIVABLES,
     ),
     "financial_payables": (
-        "/financeiro/contas-a-pagar",
+        "/financeiro/eventos-financeiros/contas-a-pagar/buscar",
         RawPayload.Resource.FINANCIAL_PAYABLES,
     ),
 }
 
 # Recursos sem paginação convencional na API v2 — chamamos sem `pagina`/`tamanho_pagina`.
-RESOURCES_WITHOUT_PAGINATION: set[str] = {"categories"}
+# `/venda/vendedores` responde com array no top-level (sem envelope `itens`/`paginacao`).
+RESOURCES_WITHOUT_PAGINATION: set[str] = {"categories", "salespeople"}
 
 
 # ============================================================================
@@ -193,7 +195,10 @@ def sync_products(tenant_id: int, client: ContaAzulClient) -> SyncLog:
 def sync_sales(tenant_id: int, client: ContaAzulClient, *, window_days: int = INITIAL_WINDOW_DAYS) -> SyncLog:
     endpoint, raw_kind = RESOURCE_ENDPOINTS["sales"]
     log = _new_log(tenant_id, "sales")
-    since = (timezone.now() - timedelta(days=window_days)).date().isoformat()
+    today = timezone.now().date()
+    since = (today - timedelta(days=window_days)).isoformat()
+    until = today.isoformat()
+    sales_params = {"data_inicio": since, "data_fim": until}
 
     customer_cache: dict[str, Customer | None] = {}
     salesperson_cache: dict[str, Salesperson | None] = {}
@@ -221,18 +226,36 @@ def sync_sales(tenant_id: int, client: ContaAzulClient, *, window_days: int = IN
         return product_cache[ext_id]
 
     try:
-        for item in client.paginate(endpoint, params={"dataInicial": since}):
+        for item in client.paginate(endpoint, params=sales_params):
             try:
                 _save_raw(tenant_id, raw_kind, item, log)
                 defaults = mappers.map_sale(item, customer_lookup=_customer, salesperson_lookup=_salesperson)
                 ext = defaults.pop("external_id")
+                # Na v2 `/venda/busca` o campo `itens` da listagem é uma STRING
+                # ("PRODUCT"/"SERVICE") e `total` vem 0. Os itens reais e o total
+                # ficam em `/v1/venda/{id}/itens` (envelope `{itens, totais}`).
+                detail_items: list[dict] = []
+                detail_total: Decimal | None = None
+                try:
+                    detail = client.get(f"/venda/{ext}/itens")
+                    if isinstance(detail, dict):
+                        detail_items = [x for x in (detail.get("itens") or []) if isinstance(x, dict)]
+                        totais = detail.get("totais") or {}
+                        if isinstance(totais, dict):
+                            t_prod = _to_decimal(totais.get("total_produtos"))
+                            t_serv = _to_decimal(totais.get("total_servicos"))
+                            t_unc = _to_decimal(totais.get("total_nao_consolidados"))
+                            detail_total = t_prod + t_serv + t_unc
+                except ContaAzulAPIError as detail_err:
+                    logger.warning("detalhe da venda %s indisponível: %s", ext, detail_err)
+
+                if detail_total is not None and detail_total > 0:
+                    defaults["total"] = detail_total
+
                 with transaction.atomic():
                     sale, _ = _upsert(Sale, tenant_id=tenant_id, external_id=ext, defaults=defaults)
                     SaleItem.unsafe_objects.filter(tenant_id=tenant_id, sale=sale).delete()
-                    raw_items: Iterable[dict] = (
-                        item.get("itens") or item.get("items") or []
-                    )
-                    for raw_item in raw_items:
+                    for raw_item in detail_items:
                         item_defaults = mappers.map_sale_item(raw_item, product_lookup=_product)
                         item_ext = item_defaults.pop("external_id", "") or ""
                         SaleItem.unsafe_objects.create(
@@ -250,6 +273,30 @@ def sync_sales(tenant_id: int, client: ContaAzulClient, *, window_days: int = IN
     return log
 
 
+def _ensure_categories_from_payload(tenant_id: int, payload: dict, *, kind: str) -> None:
+    """Auto-cria/atualiza categorias mencionadas em FinancialEntry.
+
+    A API v2 da Conta Azul retorna `categorias: [{id, nome}]` aninhado nos
+    eventos financeiros, mas o endpoint `/categorias` não traz todas. Para
+    rankings de categorias funcionarem, garantimos que toda categoria citada
+    em um evento financeiro exista localmente.
+    """
+    cats = payload.get("categorias") or payload.get("categories") or []
+    if not isinstance(cats, list):
+        return
+    for c in cats:
+        if not isinstance(c, dict):
+            continue
+        ext = c.get("id") or c.get("uuid")
+        nome = (c.get("nome") or c.get("name") or "").strip()
+        if not ext or not nome:
+            continue
+        Category.unsafe_objects.update_or_create(
+            tenant_id=tenant_id, external_id=str(ext),
+            defaults={"name": nome, "kind": kind},
+        )
+
+
 def sync_financial(
     tenant_id: int,
     client: ContaAzulClient,
@@ -260,7 +307,15 @@ def sync_financial(
     resource_key = "financial_receivables" if direction == "receivable" else "financial_payables"
     endpoint, raw_kind = RESOURCE_ENDPOINTS[resource_key]
     log = _new_log(tenant_id, resource_key)
-    since = (timezone.now() - timedelta(days=window_days)).date().isoformat()
+    today = timezone.now().date()
+    since = (today - timedelta(days=window_days)).isoformat()
+    until = (today + timedelta(days=window_days)).isoformat()
+    # API exige `data_vencimento_de` (obrigatório). Pegamos janela ampla
+    # cobrindo passado (recebidos/pagos) e futuro (a vencer).
+    fin_params = {
+        "data_vencimento_de": since,
+        "data_vencimento_ate": until,
+    }
 
     cat_cache: dict[str, Category | None] = {}
     cli_cache: dict[str, Customer | None] = {}
@@ -280,9 +335,13 @@ def sync_financial(
         return cli_cache[ext]
 
     try:
-        for item in client.paginate(endpoint, params={"dataInicial": since}):
+        # Categorias mencionadas no payload financeiro são auto-criadas:
+        # o endpoint `/categorias` não retorna todas; aqui garantimos cobertura.
+        cat_kind = "revenue" if direction == "receivable" else "expense"
+        for item in client.paginate(endpoint, params=fin_params):
             try:
                 _save_raw(tenant_id, raw_kind, item, log)
+                _ensure_categories_from_payload(tenant_id, item, kind=cat_kind)
                 defaults = mappers.map_financial_entry(
                     item,
                     direction=direction,

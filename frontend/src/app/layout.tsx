@@ -7,7 +7,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "BlueMetrics — BI para Conta Azul",
+  title: "BI AZUL — BI para Conta Azul",
   description:
     "Conecte sua Conta Azul e visualize os números do seu negócio em minutos. Dashboards inteligentes, insights por IA e teste grátis de 7 dias.",
 };

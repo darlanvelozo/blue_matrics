@@ -75,6 +75,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 # ---------------------------------------------------------------------------
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -187,8 +188,22 @@ SIMPLE_JWT = {
 # ---------------------------------------------------------------------------
 CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGIN_REGEXES = env.list(
+    "CORS_ALLOWED_ORIGIN_REGEXES",
+    default=[],
+)
 
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
+
+# CSRF: confiar em origens externas (ex.: Cloudflare Tunnel)
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=[],
+)
+
+# Atrás de proxy (Cloudflare Tunnel → Next.js → gunicorn): respeitar X-Forwarded-Proto
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
 
 # ---------------------------------------------------------------------------
 # Celery
@@ -203,6 +218,17 @@ CELERY_TASK_EAGER_PROPAGATES = True
 # Crypto (Conta Azul tokens etc.)
 # ---------------------------------------------------------------------------
 FERNET_KEY = env("FERNET_KEY", default="")
+
+# ---------------------------------------------------------------------------
+# LLM (Insights enrichment)
+# ---------------------------------------------------------------------------
+# Provider: "openai" | "anthropic" | "disabled"
+INSIGHT_LLM_PROVIDER = env("INSIGHT_LLM_PROVIDER", default="disabled")
+OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
+OPENAI_MODEL = env("OPENAI_MODEL", default="gpt-4o-mini")
+OPENAI_BASE_URL = env("OPENAI_BASE_URL", default="https://api.openai.com/v1")
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
+ANTHROPIC_MODEL = env("ANTHROPIC_MODEL", default="claude-sonnet-4-6")
 
 # ---------------------------------------------------------------------------
 # Conta Azul

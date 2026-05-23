@@ -304,6 +304,154 @@ def dre_monthly(
 
 
 # ===========================================================================
+# Top N / agregações financeiras (FinancialEntry-based)
+# ===========================================================================
+def top_categories(
+    tenant_id: int,
+    period: Period,
+    *,
+    direction: str,  # "receivable" ou "payable"
+    limit: int = 10,
+    filters: Filters = _EMPTY,
+) -> list[dict[str, Any]]:
+    """Top categorias por valor pago no período (recebido se receivable, pago se payable)."""
+    qs = FinancialEntry.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        direction=direction,
+        status=FinancialEntry.Status.PAID,
+        paid_at__gte=period.start,
+        paid_at__lte=period.end,
+        category__isnull=False,
+    )
+    qs = _apply_fin_filters(qs, filters)
+    rows = (
+        qs.values("category_id", "category__name")
+        .annotate(total=Sum("amount"), n=Count("id"))
+        .order_by("-total")[:limit]
+    )
+    return [
+        {
+            "category_id": r["category_id"],
+            "name": r["category__name"],
+            "total": _to_float(r["total"]),
+            "count": r["n"],
+        }
+        for r in rows
+    ]
+
+
+def top_financial_customers(
+    tenant_id: int,
+    period: Period,
+    *,
+    direction: str,  # "receivable" → top clientes; "payable" → top fornecedores
+    limit: int = 10,
+    filters: Filters = _EMPTY,
+) -> list[dict[str, Any]]:
+    """Top clientes/fornecedores por valor pago no período."""
+    qs = FinancialEntry.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        direction=direction,
+        status=FinancialEntry.Status.PAID,
+        paid_at__gte=period.start,
+        paid_at__lte=period.end,
+        customer__isnull=False,
+    )
+    qs = _apply_fin_filters(qs, filters)
+    rows = (
+        qs.values("customer_id", "customer__name")
+        .annotate(total=Sum("amount"), n=Count("id"))
+        .order_by("-total")[:limit]
+    )
+    return [
+        {
+            "customer_id": r["customer_id"],
+            "name": r["customer__name"],
+            "total": _to_float(r["total"]),
+            "count": r["n"],
+        }
+        for r in rows
+    ]
+
+
+def upcoming_payables(
+    tenant_id: int, *, days: int = 30, ref_date: date | None = None,
+) -> dict[str, Any]:
+    """Contas a pagar nos próximos `days` dias (status pendente/atrasado)."""
+    ref = ref_date or timezone.now().date()
+    horizon = ref + timezone.timedelta(days=days) if hasattr(timezone, "timedelta") else None
+    from datetime import timedelta as _td
+    horizon = ref + _td(days=days)
+    qs = FinancialEntry.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        direction=FinancialEntry.Direction.PAYABLE,
+        status__in=[FinancialEntry.Status.PENDING, FinancialEntry.Status.OVERDUE],
+        due_date__gte=ref,
+        due_date__lte=horizon,
+    )
+    return {
+        "days": days,
+        "total": _to_float(qs.aggregate(t=Sum("amount"))["t"]),
+        "count": qs.count(),
+    }
+
+
+def upcoming_receivables(
+    tenant_id: int, *, days: int = 30, ref_date: date | None = None,
+) -> dict[str, Any]:
+    """Contas a receber nos próximos `days` dias (status pendente/atrasado)."""
+    ref = ref_date or timezone.now().date()
+    from datetime import timedelta as _td
+    horizon = ref + _td(days=days)
+    qs = FinancialEntry.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        direction=FinancialEntry.Direction.RECEIVABLE,
+        status__in=[FinancialEntry.Status.PENDING, FinancialEntry.Status.OVERDUE],
+        due_date__gte=ref,
+        due_date__lte=horizon,
+    )
+    return {
+        "days": days,
+        "total": _to_float(qs.aggregate(t=Sum("amount"))["t"]),
+        "count": qs.count(),
+    }
+
+
+def overdue_payables_summary(
+    tenant_id: int, *, ref_date: date | None = None,
+) -> dict[str, Any]:
+    """Contas a pagar vencidas (atrasadas)."""
+    ref = ref_date or timezone.now().date()
+    qs = FinancialEntry.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        direction=FinancialEntry.Direction.PAYABLE,
+        status__in=[FinancialEntry.Status.PENDING, FinancialEntry.Status.OVERDUE],
+        due_date__lt=ref,
+    )
+    return {
+        "total": _to_float(qs.aggregate(t=Sum("amount"))["t"]),
+        "count": qs.count(),
+    }
+
+
+def overdue_receivables_summary(
+    tenant_id: int, *, ref_date: date | None = None,
+) -> dict[str, Any]:
+    """Contas a receber vencidas (atrasadas)."""
+    ref = ref_date or timezone.now().date()
+    qs = FinancialEntry.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        direction=FinancialEntry.Direction.RECEIVABLE,
+        status__in=[FinancialEntry.Status.PENDING, FinancialEntry.Status.OVERDUE],
+        due_date__lt=ref,
+    )
+    return {
+        "total": _to_float(qs.aggregate(t=Sum("amount"))["t"]),
+        "count": qs.count(),
+    }
+
+
+# ===========================================================================
 # Resumos com comparação
 # ===========================================================================
 def kpi_with_change(
@@ -334,14 +482,24 @@ def executive_summary(
     return {
         "period": {"start": period.start.isoformat(), "end": period.end.isoformat()},
         "comparison_mode": comparison,
+        # Receita: faturamento (Sale) e/ou recebimentos efetivos (cash_in)
         "revenue": kpi_with_change(tenant_id, period, metric_fn=revenue, comparison=comparison, filters=filters),
+        "cash_in": kpi_with_change(tenant_id, period, metric_fn=cash_in, comparison=comparison, filters=filters),
+        "cash_out": kpi_with_change(tenant_id, period, metric_fn=cash_out, comparison=comparison, filters=filters),
         "net_profit": kpi_with_change(tenant_id, period, metric_fn=net_profit, comparison=comparison, filters=filters),
         "avg_ticket": kpi_with_change(tenant_id, period, metric_fn=avg_ticket, comparison=comparison, filters=filters),
         "num_sales": kpi_with_change(tenant_id, period, metric_fn=num_sales, comparison=comparison, filters=filters),
         "overdue_rate": overdue_rate(tenant_id),
+        "overdue_receivables": overdue_receivables_summary(tenant_id),
+        "overdue_payables": overdue_payables_summary(tenant_id),
+        "upcoming_receivables_30d": upcoming_receivables(tenant_id, days=30),
+        "upcoming_payables_30d": upcoming_payables(tenant_id, days=30),
         "revenue_by_month": revenue_by_month(tenant_id, period, filters),
+        "cashflow_by_month": cashflow_by_month(tenant_id, period, filters),
         "top_customers": top_customers(tenant_id, period, filters=filters),
         "top_products": top_products(tenant_id, period, filters=filters),
+        "top_receivable_categories": top_categories(tenant_id, period, direction="receivable", limit=5, filters=filters),
+        "top_payable_categories": top_categories(tenant_id, period, direction="payable", limit=5, filters=filters),
     }
 
 
@@ -358,8 +516,20 @@ def financial_summary(
         "cash_out": kpi_with_change(tenant_id, period, metric_fn=cash_out, comparison=comparison, filters=filters),
         "net_profit": kpi_with_change(tenant_id, period, metric_fn=net_profit, comparison=comparison, filters=filters),
         "overdue_rate": overdue_rate(tenant_id),
+        "overdue_receivables": overdue_receivables_summary(tenant_id),
+        "overdue_payables": overdue_payables_summary(tenant_id),
+        "upcoming_receivables_30d": upcoming_receivables(tenant_id, days=30),
+        "upcoming_receivables_60d": upcoming_receivables(tenant_id, days=60),
+        "upcoming_receivables_90d": upcoming_receivables(tenant_id, days=90),
+        "upcoming_payables_30d": upcoming_payables(tenant_id, days=30),
+        "upcoming_payables_60d": upcoming_payables(tenant_id, days=60),
+        "upcoming_payables_90d": upcoming_payables(tenant_id, days=90),
         "cashflow_by_month": cashflow_by_month(tenant_id, period, filters),
         "dre_monthly": dre_monthly(tenant_id, period, filters),
+        "top_receivable_categories": top_categories(tenant_id, period, direction="receivable", limit=10, filters=filters),
+        "top_payable_categories": top_categories(tenant_id, period, direction="payable", limit=10, filters=filters),
+        "top_receivable_customers": top_financial_customers(tenant_id, period, direction="receivable", limit=10, filters=filters),
+        "top_payable_suppliers": top_financial_customers(tenant_id, period, direction="payable", limit=10, filters=filters),
     }
 
 
@@ -375,10 +545,14 @@ def commercial_summary(
         "revenue": kpi_with_change(tenant_id, period, metric_fn=revenue, comparison=comparison, filters=filters),
         "num_sales": kpi_with_change(tenant_id, period, metric_fn=num_sales, comparison=comparison, filters=filters),
         "avg_ticket": kpi_with_change(tenant_id, period, metric_fn=avg_ticket, comparison=comparison, filters=filters),
+        # Fallback FinancialEntry — útil quando o tenant não usa o módulo de Vendas
+        "cash_in": kpi_with_change(tenant_id, period, metric_fn=cash_in, comparison=comparison, filters=filters),
         "revenue_by_month": revenue_by_month(tenant_id, period, filters),
         "top_customers": top_customers(tenant_id, period, limit=10, filters=filters),
         "top_products": top_products(tenant_id, period, limit=10, filters=filters),
         "by_salesperson": sales_by_salesperson(tenant_id, period, filters),
+        # Top clientes por valor recebido — para tenants sem vendas formais
+        "top_receivable_customers": top_financial_customers(tenant_id, period, direction="receivable", limit=10, filters=filters),
     }
 
 

@@ -12,7 +12,12 @@ export type InsightKind =
   | "overdue_high"
   | "cash_negative"
   | "ticket_drop"
-  | "seasonality";
+  | "seasonality"
+  | "top_expense_category"
+  | "top_revenue_category"
+  | "upcoming_payables"
+  | "supplier_concentration"
+  | "cash_in_trend";
 
 export interface Insight {
   id: number;
@@ -32,8 +37,20 @@ export function listInsights(): Promise<{ insights: Insight[]; unread: number; t
   return apiFetch("/api/insights/");
 }
 
-export function generateInsights(): Promise<{ stats: { candidates: number; created: number; updated: number } }> {
-  return apiFetch("/api/insights/generate", { method: "POST" });
+export interface GenerateResult {
+  stats: { candidates: number; created: number; updated: number };
+  llm: {
+    requested: boolean;
+    enabled: boolean;
+    enriched?: number;
+    failed?: number;
+    reason?: string;
+  };
+}
+
+export function generateInsights(opts: { enrich?: boolean } = {}): Promise<GenerateResult> {
+  const query = opts.enrich ? "?enrich=true" : "";
+  return apiFetch(`/api/insights/generate${query}`, { method: "POST" });
 }
 
 export function markInsightRead(id: number): Promise<Insight> {

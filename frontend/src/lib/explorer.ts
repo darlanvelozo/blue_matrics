@@ -20,9 +20,24 @@ export interface CustomerListItem {
   email: string;
   phone: string;
   is_active: boolean;
-  total_spent: number;
+  /** "Cliente", "Fornecedor", "Cliente · Fornecedor" ou "—". */
+  type: string;
+  /** Total recebido deste cliente (sum FinancialEntry direction=receivable). */
+  total_received: number;
+  /** Total pago a este fornecedor (sum FinancialEntry direction=payable). */
+  total_paid: number;
+  received_count: number;
+  paid_count: number;
+  /** ISO datetime da última transação (recebimento ou pagamento). */
+  last_transaction: string | null;
+  /** Vendas formais via módulo Sale (raras na maioria dos tenants). */
   sales_count: number;
-  last_purchase: string | null;
+  total_spent_sales: number;
+}
+
+export interface CustomerListSummary {
+  total_received: number;
+  total_paid: number;
 }
 
 export interface ProductListItem {
@@ -32,8 +47,15 @@ export interface ProductListItem {
   name: string;
   price: number;
   cost: number;
+  stock_balance: number;
+  stock_value: number;
   margin_pct: number;
   is_active: boolean;
+}
+
+export interface ProductListSummary {
+  total_stock_value: number;
+  total_stock_qty: number;
 }
 
 export interface SaleListItem {
@@ -101,12 +123,23 @@ function buildQS(q: Record<string, unknown>): string {
   return p.toString() ? `?${p}` : "";
 }
 
-export function listCustomers(q: { q?: string; page?: number; page_size?: number } = {}) {
-  return apiFetch<PagedResponse<CustomerListItem>>(`/api/explorer/customers${buildQS(q)}`);
+export function listCustomers(
+  q: {
+    q?: string;
+    page?: number;
+    page_size?: number;
+    type?: "all" | "customer" | "supplier" | "active";
+  } = {},
+) {
+  return apiFetch<PagedResponse<CustomerListItem> & { summary: CustomerListSummary }>(
+    `/api/explorer/customers${buildQS(q)}`,
+  );
 }
 
 export function listProducts(q: { q?: string; page?: number; page_size?: number } = {}) {
-  return apiFetch<PagedResponse<ProductListItem>>(`/api/explorer/products${buildQS(q)}`);
+  return apiFetch<PagedResponse<ProductListItem> & { summary: ProductListSummary }>(
+    `/api/explorer/products${buildQS(q)}`,
+  );
 }
 
 export function listSales(q: SalesQuery = {}) {

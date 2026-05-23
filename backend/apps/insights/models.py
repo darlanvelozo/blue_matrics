@@ -25,6 +25,12 @@ class Insight(TenantScopedModel):
         CASH_NEGATIVE = "cash_negative", "Caixa negativo"
         TICKET_DROP = "ticket_drop", "Ticket médio caindo"
         SEASONALITY = "seasonality", "Sazonalidade detectada"
+        # Regras baseadas em FinancialEntry (tenants sem Sale, ex.: varejo/restaurante)
+        TOP_EXPENSE_CATEGORY = "top_expense_category", "Categoria de maior despesa"
+        TOP_REVENUE_CATEGORY = "top_revenue_category", "Categoria de maior receita"
+        UPCOMING_PAYABLES = "upcoming_payables", "Compromissos próximos"
+        SUPPLIER_CONCENTRATION = "supplier_concentration", "Concentração em fornecedor"
+        CASH_IN_TREND = "cash_in_trend", "Tendência de recebimentos"
 
     class Severity(models.TextChoices):
         INFO = "info", "Informação"

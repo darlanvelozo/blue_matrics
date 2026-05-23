@@ -261,6 +261,194 @@ def rule_cash_negative(tenant_id: int, *, ref: date) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Regras adicionais (FinancialEntry — tenants com fluxo direto no financeiro)
+# ---------------------------------------------------------------------------
+EXPENSE_CATEGORY_DOMINANCE_PCT = 25.0  # uma cat. acima disso é destaque
+SUPPLIER_CONCENTRATION_PCT = 25.0
+CASH_IN_TREND_THRESHOLD = 15.0  # % de variação para alertar tendência
+UPCOMING_PAYABLES_ALERT_FACTOR = 0.30  # alerta se >30% do mês passado
+
+
+def rule_top_expense_category(tenant_id: int, *, ref: date) -> list[dict]:
+    """Destaca a categoria de despesa com maior valor no mês passado."""
+    last = _last_month(ref)
+    rows = kpis.top_categories(tenant_id, last, direction="payable", limit=5)
+    if not rows:
+        return []
+    total = sum(r["total"] for r in rows) or 0
+    top = rows[0]
+    pct = (top["total"] / total * 100) if total else 0
+    if top["total"] == 0:
+        return []
+    severity = "warning" if pct >= EXPENSE_CATEGORY_DOMINANCE_PCT else "info"
+    return [{
+        "kind": "top_expense_category",
+        "severity": severity,
+        "title": f"\"{top['name']}\" lidera as despesas de {_month_pt(last.start)}",
+        "narrative": (
+            f"Em {_month_pt(last.start)} você gastou {_brl(top['total'])} com "
+            f"\"{top['name']}\", o equivalente a {_pct(pct)} do total de despesas "
+            f"do mês ({_brl(total)}). Revise se há espaço para renegociar ou "
+            f"consolidar fornecedores nessa categoria."
+        ),
+        "data": {
+            "category": top["name"],
+            "category_id": top.get("category_id"),
+            "total": top["total"],
+            "share_pct": pct,
+            "transactions": top.get("count"),
+            "top5": rows,
+        },
+        "period_start": last.start,
+        "period_end": last.end,
+    }]
+
+
+def rule_top_revenue_category(tenant_id: int, *, ref: date) -> list[dict]:
+    """Destaca a categoria de receita com maior valor no mês passado."""
+    last = _last_month(ref)
+    rows = kpis.top_categories(tenant_id, last, direction="receivable", limit=5)
+    if not rows or rows[0]["total"] == 0:
+        return []
+    total = sum(r["total"] for r in rows) or 0
+    top = rows[0]
+    pct = (top["total"] / total * 100) if total else 0
+    return [{
+        "kind": "top_revenue_category",
+        "severity": "success",
+        "title": f"\"{top['name']}\" é a maior fonte de receita em {_month_pt(last.start)}",
+        "narrative": (
+            f"Em {_month_pt(last.start)} \"{top['name']}\" trouxe {_brl(top['total'])} "
+            f"— {_pct(pct)} do que entrou no mês ({_brl(total)}). "
+            "Vale aprofundar a análise de margem e expansão dessa linha."
+        ),
+        "data": {
+            "category": top["name"],
+            "category_id": top.get("category_id"),
+            "total": top["total"],
+            "share_pct": pct,
+            "transactions": top.get("count"),
+            "top5": rows,
+        },
+        "period_start": last.start,
+        "period_end": last.end,
+    }]
+
+
+def rule_upcoming_payables(tenant_id: int, *, ref: date) -> list[dict]:
+    """Alerta sobre o total a pagar nos próximos 30 dias."""
+    upcoming = kpis.upcoming_payables(tenant_id, days=30, ref_date=ref)
+    if upcoming["count"] == 0 or upcoming["total"] == 0:
+        return []
+    # Comparativo: total pago no mês passado (proxy de fluxo médio)
+    last = _last_month(ref)
+    last_out = float(kpis.cash_out(tenant_id, last))
+    ratio = upcoming["total"] / last_out if last_out > 0 else None
+    severity = "info"
+    extra = ""
+    if ratio is not None and ratio > 1.2:
+        severity = "warning"
+        extra = (
+            f" Isso representa {ratio*100:.0f}% das despesas pagas em "
+            f"{_month_pt(last.start)} ({_brl(last_out)})."
+        )
+    return [{
+        "kind": "upcoming_payables",
+        "severity": severity,
+        "title": (
+            f"{upcoming['count']} compromissos somando "
+            f"{_brl(upcoming['total'])} vencem nos próximos 30 dias"
+        ),
+        "narrative": (
+            f"Você tem {upcoming['count']} contas a pagar com vencimento até "
+            f"{(ref + timedelta(days=30)).strftime('%d/%m/%Y')}, somando "
+            f"{_brl(upcoming['total'])}.{extra} Priorize a régua e garanta caixa."
+        ),
+        "data": {
+            "total": upcoming["total"],
+            "count": upcoming["count"],
+            "comparison_pct": (ratio * 100) if ratio is not None else None,
+            "ref_month_cash_out": last_out,
+        },
+        "period_start": ref,
+        "period_end": ref + timedelta(days=30),
+    }]
+
+
+def rule_supplier_concentration(tenant_id: int, *, ref: date) -> list[dict]:
+    """Destaca fornecedor que concentra grande parte do pagamento mensal."""
+    last = _last_month(ref)
+    rows = kpis.top_financial_customers(tenant_id, last, direction="payable", limit=5)
+    if not rows or rows[0]["total"] == 0:
+        return []
+    total = float(kpis.cash_out(tenant_id, last))
+    top = rows[0]
+    if total == 0:
+        return []
+    pct = top["total"] / total * 100
+    if pct < SUPPLIER_CONCENTRATION_PCT:
+        return []
+    return [{
+        "kind": "supplier_concentration",
+        "severity": "warning",
+        "title": f"\"{top['name']}\" representa {_pct(pct)} dos pagamentos",
+        "narrative": (
+            f"Em {_month_pt(last.start)} você pagou {_brl(top['total'])} a "
+            f"\"{top['name']}\" — {_pct(pct)} de todas as saídas do mês. "
+            "Concentração alta em um fornecedor aumenta risco operacional. "
+            "Considere diversificar ou renegociar."
+        ),
+        "data": {
+            "supplier": top["name"],
+            "customer_id": top.get("customer_id"),
+            "total": top["total"],
+            "share_pct": pct,
+            "transactions": top.get("count"),
+            "top5": rows,
+        },
+        "period_start": last.start,
+        "period_end": last.end,
+    }]
+
+
+def rule_cash_in_trend(tenant_id: int, *, ref: date) -> list[dict]:
+    """Compara recebimentos do mês passado com o anterior. Sinaliza tendência."""
+    last = _last_month(ref)
+    prev = _prev_month_of(last)
+    last_in = float(kpis.cash_in(tenant_id, last))
+    prev_in = float(kpis.cash_in(tenant_id, prev))
+    if last_in == 0 or prev_in == 0:
+        return []
+    change = (last_in - prev_in) / prev_in * 100
+    if abs(change) < CASH_IN_TREND_THRESHOLD:
+        return []
+    if change < 0:
+        severity = "warning" if change > -25 else "critical"
+        title = f"Recebimentos caíram {_pct(change)} em {_month_pt(last.start)}"
+        narrative = (
+            f"Você recebeu {_brl(last_in)} em {_month_pt(last.start)}, "
+            f"{_pct(change)} a menos que em {_month_pt(prev.start)} ({_brl(prev_in)}). "
+            "Verifique a régua de cobrança e o pipeline de vendas."
+        )
+    else:
+        severity = "success"
+        title = f"Recebimentos subiram {_pct(change)} em {_month_pt(last.start)}"
+        narrative = (
+            f"Excelente — {_month_pt(last.start)} fechou em {_brl(last_in)}, "
+            f"{_pct(change)} acima de {_month_pt(prev.start)} ({_brl(prev_in)})."
+        )
+    return [{
+        "kind": "cash_in_trend",
+        "severity": severity,
+        "title": title,
+        "narrative": narrative,
+        "data": {"current": last_in, "previous": prev_in, "change_pct": change},
+        "period_start": last.start,
+        "period_end": last.end,
+    }]
+
+
+# ---------------------------------------------------------------------------
 ALL_RULES = [
     rule_revenue_change,
     rule_expense_surge,
@@ -270,6 +458,12 @@ ALL_RULES = [
     rule_top_product_last_month,
     rule_inactive_customers,
     rule_cash_negative,
+    # Financeiro (FinancialEntry)
+    rule_top_expense_category,
+    rule_top_revenue_category,
+    rule_upcoming_payables,
+    rule_supplier_concentration,
+    rule_cash_in_trend,
 ]
 
 

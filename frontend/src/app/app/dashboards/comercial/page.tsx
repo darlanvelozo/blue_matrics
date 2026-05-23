@@ -10,6 +10,7 @@ import { EmptyDashboardState } from "@/components/dashboards/empty-state";
 import { FiltersPanel, type DashboardFilters } from "@/components/dashboards/filters-panel";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { PeriodFilter } from "@/components/dashboards/period-filter";
+import { RankingList } from "@/components/dashboards/ranking-list";
 import { ReportActions } from "@/components/dashboards/report-actions";
 import { getCommercial } from "@/lib/dashboards";
 import { usePeriod } from "@/lib/use-period";
@@ -69,12 +70,36 @@ function Inner() {
         <EmptyDashboardState />
       ) : (
         <>
-          <section className="grid gap-4 sm:grid-cols-3">
+          {data.num_sales.current === 0 && data.cash_in.current > 0 && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+              <p className="font-medium">Sem vendas formais no período</p>
+              <p className="mt-0.5 text-xs">
+                Esta empresa não registra vendas no módulo de Vendas da Conta Azul —
+                os recebimentos chegam pelo módulo Financeiro. Veja a seção
+                &ldquo;Top clientes (recebimentos)&rdquo; abaixo ou consulte o{" "}
+                <Link
+                  href="/app/dashboards/financeiro"
+                  className="font-medium underline underline-offset-2"
+                >
+                  dashboard Financeiro
+                </Link>{" "}
+                para análise completa.
+              </p>
+            </div>
+          )}
+
+          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <KpiCard
-              label="Faturamento"
+              label="Faturamento (vendas)"
               value={data.revenue.current}
               changePct={data.revenue.change_pct}
               sparkline={data.revenue_by_month.map((m) => ({ value: m.revenue }))}
+            />
+            <KpiCard
+              label="Recebimentos totais"
+              value={data.cash_in.current}
+              changePct={data.cash_in.change_pct}
+              sparkColor="#16a34a"
             />
             <KpiCard
               label="Nº de vendas"
@@ -90,128 +115,153 @@ function Inner() {
             />
           </section>
 
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Faturamento ao longo do tempo</CardTitle>
-                <p className="text-[11px] text-[color:var(--muted-foreground)]">
-                  Clique numa barra para detalhes
-                </p>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <RevenueChart
-                data={data.revenue_by_month}
-                onMonthClick={(ym) => setDrillMonth(ym)}
-              />
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-6 lg:grid-cols-2">
+          {data.num_sales.current > 0 && (
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle>Ranking de clientes</CardTitle>
-                  <Link
-                    href="/app/customers"
-                    className="text-xs font-medium text-[color:var(--primary)] hover:underline"
-                  >
-                    Ver todos
-                  </Link>
+                  <CardTitle>Faturamento ao longo do tempo</CardTitle>
+                  <p className="text-[11px] text-[color:var(--muted-foreground)]">
+                    Clique numa barra para detalhes
+                  </p>
                 </div>
+              </CardHeader>
+              <CardContent>
+                <RevenueChart
+                  data={data.revenue_by_month}
+                  onMonthClick={(ym) => setDrillMonth(ym)}
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          <section className="grid gap-6 md:grid-cols-2">
+            <RankingList
+              title="Top clientes (recebimentos)"
+              description="Quem mais pagou para você no período (módulo Financeiro)"
+              rows={data.top_receivable_customers.map((c) => ({
+                id: c.customer_id,
+                name: c.name,
+                total: c.total,
+                count: c.count,
+                countLabel: "transações",
+              }))}
+            />
+            {data.top_customers.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Ranking de clientes (vendas formais)</CardTitle>
+                    <Link
+                      href="/app/customers"
+                      className="text-xs font-medium text-[color:var(--primary)] hover:underline"
+                    >
+                      Ver todos
+                    </Link>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <ul className="divide-y divide-[color:var(--border)]">
+                    {data.top_customers.map((c, i) => (
+                      <li
+                        key={c.customer_id}
+                        className="flex items-center justify-between px-6 py-3 text-sm"
+                      >
+                        <span className="flex items-center gap-3">
+                          <span className="text-xs font-mono text-[color:var(--muted-foreground)]">
+                            #{i + 1}
+                          </span>
+                          <Link
+                            href={`/app/sales?customer=${c.customer_id}`}
+                            className="font-medium hover:underline"
+                          >
+                            {c.name}
+                          </Link>
+                        </span>
+                        <span className="flex items-baseline gap-3">
+                          <span className="text-xs text-[color:var(--muted-foreground)]">
+                            {c.sales} {c.sales === 1 ? "venda" : "vendas"}
+                          </span>
+                          <span className="font-mono">
+                            {formatCurrencyBRL(c.total)}
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            ) : data.top_products.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Ranking de produtos</CardTitle>
+                    <Link
+                      href="/app/products"
+                      className="text-xs font-medium text-[color:var(--primary)] hover:underline"
+                    >
+                      Ver todos
+                    </Link>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <ul className="divide-y divide-[color:var(--border)]">
+                    {data.top_products.map((p, i) => (
+                      <li
+                        key={p.product_id}
+                        className="flex items-center justify-between px-6 py-3 text-sm"
+                      >
+                        <span className="flex items-center gap-3">
+                          <span className="text-xs font-mono text-[color:var(--muted-foreground)]">
+                            #{i + 1}
+                          </span>
+                          <span className="font-medium">{p.name}</span>
+                        </span>
+                        <span className="flex items-baseline gap-3">
+                          <span className="text-xs text-[color:var(--muted-foreground)]">
+                            {p.quantity.toLocaleString("pt-BR")} und
+                          </span>
+                          <span className="font-mono">
+                            {formatCurrencyBRL(p.total)}
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            ) : null}
+          </section>
+
+          {data.by_salesperson.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Vendas por vendedor</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 <ul className="divide-y divide-[color:var(--border)]">
-                  {data.top_customers.map((c, i) => (
-                    <li key={c.customer_id} className="flex items-center justify-between px-6 py-3 text-sm">
+                  {data.by_salesperson.map((s, i) => (
+                    <li
+                      key={s.salesperson_id}
+                      className="flex items-center justify-between px-6 py-3 text-sm"
+                    >
                       <span className="flex items-center gap-3">
                         <span className="text-xs font-mono text-[color:var(--muted-foreground)]">
                           #{i + 1}
                         </span>
-                        <Link
-                          href={`/app/sales?customer=${c.customer_id}`}
-                          className="font-medium hover:underline"
-                        >
-                          {c.name}
-                        </Link>
+                        <span className="font-medium">{s.name}</span>
                       </span>
                       <span className="flex items-baseline gap-3">
                         <span className="text-xs text-[color:var(--muted-foreground)]">
-                          {c.sales} {c.sales === 1 ? "venda" : "vendas"}
+                          {s.sales} {s.sales === 1 ? "venda" : "vendas"}
                         </span>
-                        <span className="font-mono">{formatCurrencyBRL(c.total)}</span>
+                        <span className="font-mono">{formatCurrencyBRL(s.total)}</span>
                       </span>
                     </li>
                   ))}
                 </ul>
               </CardContent>
             </Card>
-
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>Ranking de produtos</CardTitle>
-                  <Link
-                    href="/app/products"
-                    className="text-xs font-medium text-[color:var(--primary)] hover:underline"
-                  >
-                    Ver todos
-                  </Link>
-                </div>
-              </CardHeader>
-              <CardContent className="p-0">
-                <ul className="divide-y divide-[color:var(--border)]">
-                  {data.top_products.map((p, i) => (
-                    <li key={p.product_id} className="flex items-center justify-between px-6 py-3 text-sm">
-                      <span className="flex items-center gap-3">
-                        <span className="text-xs font-mono text-[color:var(--muted-foreground)]">
-                          #{i + 1}
-                        </span>
-                        <span className="font-medium">{p.name}</span>
-                      </span>
-                      <span className="flex items-baseline gap-3">
-                        <span className="text-xs text-[color:var(--muted-foreground)]">
-                          {p.quantity.toLocaleString("pt-BR")} und
-                        </span>
-                        <span className="font-mono">{formatCurrencyBRL(p.total)}</span>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Vendas por vendedor</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <ul className="divide-y divide-[color:var(--border)]">
-                {data.by_salesperson.map((s, i) => (
-                  <li key={s.salesperson_id} className="flex items-center justify-between px-6 py-3 text-sm">
-                    <span className="flex items-center gap-3">
-                      <span className="text-xs font-mono text-[color:var(--muted-foreground)]">
-                        #{i + 1}
-                      </span>
-                      <span className="font-medium">{s.name}</span>
-                    </span>
-                    <span className="flex items-baseline gap-3">
-                      <span className="text-xs text-[color:var(--muted-foreground)]">
-                        {s.sales} {s.sales === 1 ? "venda" : "vendas"}
-                      </span>
-                      <span className="font-mono">{formatCurrencyBRL(s.total)}</span>
-                    </span>
-                  </li>
-                ))}
-                {data.by_salesperson.length === 0 && (
-                  <li className="px-6 py-6 text-center text-sm text-[color:var(--muted-foreground)]">
-                    Nenhum vendedor com vendas neste período.
-                  </li>
-                )}
-              </ul>
-            </CardContent>
-          </Card>
+          )}
         </>
       )}
 

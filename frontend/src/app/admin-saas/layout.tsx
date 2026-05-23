@@ -44,7 +44,7 @@ export default function AdminSaasLayout({ children }: { children: React.ReactNod
         <Shield className="h-10 w-10 text-red-500" />
         <h1 className="text-xl font-bold">Acesso restrito</h1>
         <p className="max-w-sm text-sm text-[color:var(--muted-foreground)]">
-          Esta área é restrita a administradores da plataforma BlueMetrics.
+          Esta área é restrita a administradores da plataforma BI AZUL.
         </p>
         <Link href="/app">
           <Button variant="outline">Voltar ao app</Button>

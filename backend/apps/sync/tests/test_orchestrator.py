@@ -50,7 +50,8 @@ RESPONSES = {
         {"id": "cat-r", "nome": "Vendas", "tipo": "RECEITA"},
         {"id": "cat-d", "nome": "Aluguel", "tipo": "DESPESA"},
     ]},
-    "/vendedor": {"itens": [{"id": "vend-1", "nome": "Maria"}]},
+    # `/venda/vendedores` na v2 responde array no top-level
+    "/venda/vendedores": [{"id": "vend-1", "nome": "Maria"}],
     "/pessoa": {"itens": [
         {"id": "cli-1", "nome": "Padaria Pão Bom", "documento": "12345"},
         {"id": "cli-2", "nome": "Mercearia X"},
@@ -58,24 +59,28 @@ RESPONSES = {
     "/produtos": {"itens": [
         {"id": "prod-1", "nome": "Pão Francês", "valorVenda": "0.50"},
     ]},
-    "/venda": {"itens": [
+    "/venda/busca": {"itens": [
         {
             "id": "sale-1",
             "numero": "001",
-            "situacao": "finalizada",
-            "valorTotal": "100.00",
-            "dataEmissao": "2026-04-01T10:00:00",
-            "idCliente": "cli-1",
-            "idVendedor": "vend-1",
-            "itens": [
-                {"id": "i1", "idProduto": "prod-1", "quantidade": 200, "valorUnitario": "0.50", "valorTotal": "100"},
-            ],
+            "situacao": {"nome": "APROVADO", "descricao": "Aprovado"},
+            "total": 0,  # listagem sempre vem 0; valor real vem do detalhe
+            "data": "2026-04-01",
+            "cliente": {"id": "cli-1", "nome": "Padaria Pão Bom"},
+            "itens": "PRODUCT",  # string na listagem (não array)
         }
     ]},
-    "/financeiro/contas-a-receber": {"itens": [
+    # Endpoint de detalhe da venda — itens + totais
+    "/venda/sale-1/itens": {
+        "itens": [
+            {"id": "i1", "idProduto": "prod-1", "quantidade": 200, "valorUnitario": "0.50", "valorTotal": "100"},
+        ],
+        "totais": {"total_produtos": 100, "total_servicos": 0, "total_nao_consolidados": 0},
+    },
+    "/financeiro/eventos-financeiros/contas-a-receber/buscar": {"itens": [
         {"id": "ar-1", "valor": "100", "situacao": "pago", "idCategoria": "cat-r", "idCliente": "cli-1", "dataVencimento": "2026-04-10"},
     ]},
-    "/financeiro/contas-a-pagar": {"itens": [
+    "/financeiro/eventos-financeiros/contas-a-pagar/buscar": {"itens": [
         {"id": "ap-1", "valor": "500", "situacao": "pendente", "idCategoria": "cat-d", "dataVencimento": "2026-04-15"},
     ]},
 }
@@ -124,7 +129,7 @@ class TestSyncTenant:
         sale = sales.first()
         assert sale.customer is not None
         assert sale.customer.external_id == "cli-1"
-        assert sale.salesperson is not None
+        # `/venda/busca` v2 não expõe vendedor na listagem; pode vir None
         assert SaleItem.unsafe_objects.filter(sale=sale).count() == 1
         # financeiro
         ar = FinancialEntry.unsafe_objects.filter(tenant_id=tenant.id, direction="receivable")
@@ -155,7 +160,7 @@ class TestSyncTenant:
         tenant, _ = connected_tenant
 
         def handler(req: httpx.Request) -> httpx.Response:
-            if req.url.path.endswith("/venda"):
+            if req.url.path.endswith("/venda/busca"):
                 return httpx.Response(500, text="oops")
             for p, data in RESPONSES.items():
                 if req.url.path.endswith(p):

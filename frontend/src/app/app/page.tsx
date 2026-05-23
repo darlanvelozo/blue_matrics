@@ -2,291 +2,455 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import {
+  AlertCircle,
   ArrowRight,
+  Banknote,
   BarChart3,
-  Brain,
+  Building2,
+  CreditCard,
   Plug,
-  RefreshCw,
   ShoppingCart,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
   Wallet,
+  Wand2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { CashflowChart } from "@/components/dashboards/charts";
+import { EmptyDashboardState } from "@/components/dashboards/empty-state";
 import { KpiCard } from "@/components/dashboards/kpi-card";
-import { getExecutive } from "@/lib/dashboards";
-import { getContaAzulStatus } from "@/lib/integrations";
-import { listInsights } from "@/lib/insights";
+import { RankingList } from "@/components/dashboards/ranking-list";
+import { ScoreGauge } from "@/components/overview/score-gauge";
+import { SmartCardItem } from "@/components/overview/smart-card";
+import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  getOverview,
+  type OverviewKpi,
+  type OverviewResponse,
+} from "@/lib/dashboards";
+import { getContaAzulCredentials } from "@/lib/integrations";
 import { listSyncLogs } from "@/lib/sync";
+import { formatCurrencyBRL } from "@/lib/utils";
 
-const SEVERITY_CLS = {
-  info: "bg-blue-500/10 text-blue-600 border-blue-500/30",
-  success: "bg-green-500/10 text-green-600 border-green-500/30",
-  warning: "bg-amber-500/10 text-amber-600 border-amber-500/30",
-  critical: "bg-red-500/10 text-red-600 border-red-500/30",
-} as const;
-
-export default function AppHome() {
-  const exec = useQuery({
-    queryKey: ["dashboards", "executive", "last_12m"],
-    queryFn: () => getExecutive({ preset: "last_12m" }),
+export default function HomePage() {
+  const overview = useQuery({
+    queryKey: ["overview"],
+    queryFn: getOverview,
+    refetchOnWindowFocus: false,
   });
-  const ca = useQuery({ queryKey: ["contaazul", "status"], queryFn: getContaAzulStatus });
-  const insights = useQuery({ queryKey: ["insights"], queryFn: listInsights });
-  const sync = useQuery({ queryKey: ["sync", "logs"], queryFn: listSyncLogs });
+  const ca = useQuery({
+    queryKey: ["contaazul-credentials"],
+    queryFn: getContaAzulCredentials,
+    staleTime: 60_000,
+  });
+  const sync = useQuery({
+    queryKey: ["sync-logs"],
+    queryFn: listSyncLogs,
+    staleTime: 60_000,
+  });
 
-  const hasData = !!exec.data?.has_data;
-  const lastSyncMaster = sync.data?.logs.find((l) => l.resource === "all");
-  const recentInsights = insights.data?.insights.slice(0, 3) ?? [];
+  const data = overview.data;
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">Visão geral</h1>
-        <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-          Tudo que importa em um só lugar.
-        </p>
+    <div className="space-y-8">
+      {/* Header */}
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-widest text-[color:var(--muted-foreground)]">
+            Visão geral · {data?.period.current_month.label ?? "—"}
+          </p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight">
+            {data?.tenant?.name ?? "Sua empresa"}
+          </h1>
+          <p className="mt-0.5 text-sm text-[color:var(--muted-foreground)]">
+            Resumo executivo automático com base nos dados sincronizados da Conta Azul.
+          </p>
+        </div>
+        <Link
+          href="/app/ai"
+          className="group inline-flex items-center gap-2 rounded-lg bg-[color:var(--primary)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
+        >
+          <Wand2 className="h-4 w-4" />
+          Perguntar à IA
+          <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
+        </Link>
       </header>
 
-      {/* Empty state: nada conectado */}
-      {!hasData && !exec.isLoading && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
-                <Plug className="h-5 w-5" />
-              </span>
-              <div>
-                <CardTitle>Conecte sua Conta Azul</CardTitle>
-                <CardDescription>30 segundos. Sem digitar nenhuma senha.</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <p className="mb-4 text-sm text-[color:var(--muted-foreground)]">
-              Quando você conectar, vamos sincronizar seus últimos 12 meses automaticamente.
-            </p>
-            <Link href="/app/integrations">
-              <Button className="inline-flex items-center gap-2">
-                Conectar agora <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* KPIs principais */}
-      {hasData && (
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {exec.isLoading
-            ? Array.from({ length: 4 }).map((_, i) => (
-                <Card key={i}>
-                  <CardContent className="space-y-2 p-5">
-                    <Skeleton className="h-3 w-20" />
-                    <Skeleton className="h-7 w-32" />
-                    <Skeleton className="h-3 w-24" />
-                  </CardContent>
-                </Card>
-              ))
-            : exec.data && (
-                <>
-                  <KpiCard
-                    label="Faturamento (12m)"
-                    value={exec.data.revenue.current}
-                    changePct={exec.data.revenue.change_pct}
-                  />
-                  <KpiCard
-                    label="Lucro líquido (12m)"
-                    value={exec.data.net_profit.current}
-                    changePct={exec.data.net_profit.change_pct}
-                  />
-                  <KpiCard
-                    label="Ticket médio"
-                    value={exec.data.avg_ticket.current}
-                    changePct={exec.data.avg_ticket.change_pct}
-                  />
-                  <KpiCard
-                    label="Inadimplência"
-                    value={exec.data.overdue_rate}
-                    format="percent"
-                    positiveIsGood={false}
-                  />
-                </>
-              )}
-        </section>
-      )}
-
-      {/* Insights + status */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Insights recentes */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Brain className="h-4 w-4 text-blue-500" />
-                <CardTitle className="text-base">Insights recentes</CardTitle>
-              </div>
-              <Link
-                href="/app/insights"
-                className="text-xs font-medium text-[color:var(--primary)] hover:underline"
-              >
-                Ver todos
-              </Link>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            {insights.isLoading ? (
-              <div className="space-y-3 px-6 pb-6">
-                <Skeleton className="h-14" />
-                <Skeleton className="h-14" />
-              </div>
-            ) : recentInsights.length === 0 ? (
-              <p className="px-6 pb-6 text-sm text-[color:var(--muted-foreground)]">
-                Nenhum insight ainda. Vá em <Link href="/app/insights" className="underline">Insights</Link> e clique em "Gerar insights agora".
-              </p>
-            ) : (
-              <ul className="divide-y divide-[color:var(--border)]">
-                {recentInsights.map((i) => (
-                  <li key={i.id} className="flex items-start gap-3 px-6 py-3">
-                    <span
-                      className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${SEVERITY_CLS[i.severity]}`}
-                    >
-                      {i.severity}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">{i.title}</p>
-                      <p className="line-clamp-2 text-xs text-[color:var(--muted-foreground)]">
-                        {i.narrative}
-                      </p>
-                    </div>
-                  </li>
+      {/* Loading state */}
+      {overview.isLoading ? (
+        <SkeletonSection />
+      ) : !data?.has_data ? (
+        <EmptyDashboardState />
+      ) : (
+        <>
+          {/* Cards inteligentes */}
+          {data.smart_cards.length > 0 && (
+            <section>
+              <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-[color:var(--muted-foreground)]">
+                <Sparkles className="h-3 w-3 text-[color:var(--primary)]" />
+                Alertas e oportunidades · gerados automaticamente
+              </h2>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {data.smart_cards.map((c, i) => (
+                  <SmartCardItem key={i} card={c} />
                 ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+              </div>
+            </section>
+          )}
 
-        {/* Status integrações + sync */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Conta Azul</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            <div>
-              <p className="text-[color:var(--muted-foreground)]">Conexão</p>
-              <p className="mt-1 flex items-center gap-2 font-medium">
-                <span
-                  className={`inline-block h-2 w-2 rounded-full ${
-                    ca.data?.status === "connected" ? "bg-green-500" : "bg-zinc-400"
-                  }`}
-                />
-                {ca.data?.status ?? "—"}
-                {ca.data?.dev_mode && (
-                  <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
-                    DEV
-                  </span>
-                )}
-              </p>
+          {/* KPIs principais + Score */}
+          <section className="grid gap-4 lg:grid-cols-[1fr_280px]">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <KpiCard
+                label="Faturamento do mês"
+                value={data.kpis.revenue_month.current}
+                changePct={data.kpis.revenue_month.change_pct ?? null}
+                sparkline={data.trend_12m.map((m) => ({ value: m.in }))}
+                sparkColor="#10b981"
+              />
+              <KpiCard
+                label="Lucro líquido"
+                value={data.kpis.net_profit_month.current}
+                changePct={data.kpis.net_profit_month.change_pct ?? null}
+                sparkline={data.trend_12m.map((m) => ({ value: m.net }))}
+              />
+              <KpiCard
+                label="Margem líquida"
+                value={data.kpis.net_margin_pct.current}
+                changePct={data.kpis.net_margin_pct.change_pct ?? null}
+                format="percent"
+              />
+              <KpiCard
+                label="EBITDA do mês"
+                value={data.kpis.ebitda.current}
+              />
+              <KpiCard
+                label="Saldo de caixa atual"
+                value={data.kpis.cash_balance_now.current}
+              />
+              <KpiCard
+                label="Burn rate mensal"
+                value={data.kpis.burn_rate_monthly.current}
+                positiveIsGood={false}
+              />
             </div>
-            <div>
-              <p className="text-[color:var(--muted-foreground)]">Última sincronização</p>
-              <p className="mt-1 font-medium">
-                {lastSyncMaster
-                  ? new Date(lastSyncMaster.started_at).toLocaleString("pt-BR", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : "—"}
-                {lastSyncMaster && (
-                  <span
-                    className={`ml-2 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                      lastSyncMaster.status === "success"
-                        ? "border-green-500/30 bg-green-500/10 text-green-600"
-                        : lastSyncMaster.status === "partial"
-                        ? "border-amber-500/30 bg-amber-500/10 text-amber-600"
-                        : "border-red-500/30 bg-red-500/10 text-red-600"
-                    }`}
-                  >
-                    {lastSyncMaster.status}
-                  </span>
-                )}
-              </p>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <Link href="/app/integrations" className="flex-1">
-                <Button variant="outline" size="sm" className="w-full">
-                  <Plug className="mr-1.5 h-3 w-3" />
-                  Integrações
-                </Button>
-              </Link>
-              <Link href="/app/sync" className="flex-1">
-                <Button variant="outline" size="sm" className="w-full">
-                  <RefreshCw className="mr-1.5 h-3 w-3" />
-                  Sincronizar
-                </Button>
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            <ScoreGauge score={data.health_score} />
+          </section>
 
-      {/* Atalhos para os dashboards */}
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--muted-foreground)]">
-          Dashboards
-        </h2>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <ShortcutCard
-            href="/app/dashboards/executivo"
-            icon={BarChart3}
-            title="Executivo"
-            description="Faturamento, lucro, top clientes e produtos."
-          />
-          <ShortcutCard
-            href="/app/dashboards/financeiro"
-            icon={Wallet}
-            title="Financeiro"
-            description="Fluxo de caixa, contas a pagar e receber, inadimplência."
-          />
-          <ShortcutCard
-            href="/app/dashboards/comercial"
-            icon={ShoppingCart}
-            title="Comercial"
-            description="Vendas, ticket médio, ranking de vendedores."
-          />
-        </div>
-      </section>
+          {/* Ponto de equilíbrio + Forecast 30d */}
+          <section className="grid gap-4 lg:grid-cols-2">
+            <BreakevenCard data={data.kpis.breakeven} />
+            <ForecastCard data={data.kpis.forecast_30d} />
+          </section>
+
+          {/* Receita vs despesa (12m) */}
+          <Card>
+            <CardContent className="p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold">Receita vs Despesas</h2>
+                  <p className="text-xs text-[color:var(--muted-foreground)]">
+                    Últimos 12 meses
+                  </p>
+                </div>
+                <Link
+                  href="/app/dashboards/financeiro"
+                  className="text-xs font-medium text-[color:var(--primary)] hover:underline"
+                >
+                  Ver financeiro →
+                </Link>
+              </div>
+              <CashflowChart data={data.trend_12m} />
+            </CardContent>
+          </Card>
+
+          {/* Top rankings */}
+          <section className="grid gap-4 md:grid-cols-2">
+            <RankingList
+              title="Onde entra dinheiro"
+              description="Categorias de receita do mês"
+              rows={data.rankings.top_revenue_categories.map((c) => ({
+                id: c.category_id,
+                name: c.name,
+                total: c.total,
+                count: c.count,
+                countLabel: "transações",
+              }))}
+            />
+            <RankingList
+              title="Onde sai dinheiro"
+              description="Categorias de despesa do mês"
+              rows={data.rankings.top_expense_categories.map((c) => ({
+                id: c.category_id,
+                name: c.name,
+                total: c.total,
+                count: c.count,
+                countLabel: "transações",
+              }))}
+            />
+          </section>
+
+          <section className="grid gap-4 md:grid-cols-2">
+            <RankingList
+              title="Clientes VIP"
+              description="Maiores pagadores no mês"
+              rows={data.rankings.top_customers_receivable.map((c) => ({
+                id: c.customer_id,
+                name: c.name,
+                total: c.total,
+                count: c.count,
+                countLabel: "transações",
+              }))}
+              emptyMessage="Sem clientes identificados no mês (à vista anônimo)."
+            />
+            <RankingList
+              title="Principais fornecedores"
+              description="Para quem mais pagamos no mês"
+              rows={data.rankings.top_suppliers_payable.map((c) => ({
+                id: c.customer_id,
+                name: c.name,
+                total: c.total,
+                count: c.count,
+                countLabel: "transações",
+              }))}
+            />
+          </section>
+
+          {/* Atalhos para dashboards */}
+          <section>
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-[color:var(--muted-foreground)]">
+              Aprofundar
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Shortcut href="/app/dashboards/executivo" icon={BarChart3} title="Executivo" />
+              <Shortcut href="/app/dashboards/financeiro" icon={Wallet} title="Financeiro" />
+              <Shortcut href="/app/dashboards/comercial" icon={ShoppingCart} title="Comercial" />
+              <Shortcut href="/app/insights" icon={Sparkles} title="Insights" />
+            </div>
+          </section>
+        </>
+      )}
+
+      {/* Status footer */}
+      <SystemFooter ca={ca.data} sync={sync.data} />
     </div>
   );
 }
 
-function ShortcutCard({
+function BreakevenCard({ data }: { data: OverviewResponse["kpis"]["breakeven"] }) {
+  const above = data.above;
+  const pct = Math.min(100, Math.max(0, data.pct));
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Ponto de equilíbrio</h3>
+            <p className="text-xs text-[color:var(--muted-foreground)]">
+              Receita necessária pra cobrir os custos
+            </p>
+          </div>
+          <span
+            className={
+              above
+                ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700"
+                : "rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+            }
+          >
+            {above ? "ACIMA" : "ABAIXO"}
+          </span>
+        </div>
+        <div className="mt-4 space-y-2">
+          <div className="flex justify-between text-xs">
+            <span className="text-[color:var(--muted-foreground)]">Receita atual</span>
+            <span className="font-mono font-semibold">{formatCurrencyBRL(data.revenue)}</span>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-[color:var(--muted-foreground)]">Ponto de equilíbrio</span>
+            <span className="font-mono">{formatCurrencyBRL(data.breakeven)}</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-[color:var(--muted)]">
+            <div
+              className={above ? "h-full bg-emerald-500" : "h-full bg-amber-500"}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-[color:var(--muted-foreground)]">
+              {above ? "Sobra" : "Faltam"}
+            </span>
+            <span
+              className={
+                above
+                  ? "font-mono font-semibold text-emerald-600"
+                  : "font-mono font-semibold text-amber-600"
+              }
+            >
+              {formatCurrencyBRL(Math.abs(data.diff))}
+            </span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ForecastCard({ data }: { data: OverviewResponse["kpis"]["forecast_30d"] }) {
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Previsão de caixa · 30 dias</h3>
+            <p className="text-xs text-[color:var(--muted-foreground)]">
+              Baseada em recebíveis e pagamentos em aberto
+            </p>
+          </div>
+          {data.at_risk && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+              <AlertCircle className="h-3 w-3" />
+              EM RISCO
+            </span>
+          )}
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-3 text-center text-xs">
+          <div>
+            <p className="text-[color:var(--muted-foreground)]">Hoje</p>
+            <p className="mt-1 font-mono text-sm font-semibold">
+              {formatCurrencyBRL(data.current_balance)}
+            </p>
+          </div>
+          <div>
+            <p className="flex items-center justify-center gap-1 text-emerald-600">
+              <TrendingUp className="h-3 w-3" /> Entradas
+            </p>
+            <p className="mt-1 font-mono text-sm">{formatCurrencyBRL(data.expected_in)}</p>
+          </div>
+          <div>
+            <p className="flex items-center justify-center gap-1 text-red-600">
+              <TrendingDown className="h-3 w-3" /> Saídas
+            </p>
+            <p className="mt-1 font-mono text-sm">{formatCurrencyBRL(data.expected_out)}</p>
+          </div>
+        </div>
+        <div className="mt-4 rounded-md border border-[color:var(--border)] bg-[color:var(--muted)]/40 p-3 text-center">
+          <p className="text-[10px] uppercase tracking-wide text-[color:var(--muted-foreground)]">
+            Saldo projetado em 30 dias
+          </p>
+          <p
+            className={
+              data.projected_balance < 0
+                ? "mt-1 font-mono text-xl font-bold text-red-600"
+                : "mt-1 font-mono text-xl font-bold text-emerald-600"
+            }
+          >
+            {formatCurrencyBRL(data.projected_balance)}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Shortcut({
   href,
   icon: Icon,
   title,
-  description,
 }: {
   href: string;
   icon: typeof BarChart3;
   title: string;
-  description: string;
 }) {
   return (
-    <Link href={href}>
-      <Card className="h-full transition-shadow hover:shadow-md">
-        <CardContent className="p-5">
-          <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
-            <Icon className="h-4 w-4" />
-          </div>
-          <h3 className="mb-1 font-semibold">{title}</h3>
-          <p className="text-xs text-[color:var(--muted-foreground)]">{description}</p>
-          <span className="mt-3 inline-flex items-center text-xs font-medium text-[color:var(--primary)]">
-            Abrir <ArrowRight className="ml-1 h-3 w-3" />
-          </span>
-        </CardContent>
-      </Card>
+    <Link
+      href={href}
+      className="group flex items-center gap-3 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] p-3 transition hover:border-[color:var(--primary)]/40 hover:shadow-sm"
+    >
+      <span className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-[color:var(--primary)]/10 text-[color:var(--primary)]">
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="text-sm font-medium">{title}</span>
+      <ArrowRight className="ml-auto h-3.5 w-3.5 text-[color:var(--muted-foreground)] transition group-hover:translate-x-0.5 group-hover:text-[color:var(--primary)]" />
+    </Link>
+  );
+}
+
+function SkeletonSection() {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-28" />
+        ))}
+      </div>
+      <Skeleton className="h-48" />
+    </div>
+  );
+}
+
+function SystemFooter({ ca, sync }: { ca: unknown; sync: unknown }) {
+  type Cred = { has_credentials?: boolean; status?: string };
+  type Logs = { logs?: Array<{ resource: string; status: string; started_at: string }> };
+  const credsTyped = ca as Cred | undefined;
+  const syncTyped = sync as Logs | undefined;
+  const connected =
+    credsTyped?.has_credentials && (credsTyped?.status ?? "connected") === "connected";
+  const lastSync = syncTyped?.logs?.find((l) => l.resource === "")?.started_at;
+
+  return (
+    <section className="grid gap-3 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] p-4 text-xs sm:grid-cols-3">
+      <FooterItem
+        icon={Plug}
+        label="Integração Conta Azul"
+        value={connected ? "Conectada" : "Pendente"}
+        color={connected ? "text-emerald-600" : "text-amber-600"}
+        href="/app/integrations"
+      />
+      <FooterItem
+        icon={Banknote}
+        label="Última sincronização"
+        value={
+          lastSync ? new Date(lastSync).toLocaleString("pt-BR") : "Nunca sincronizado"
+        }
+        color="text-[color:var(--muted-foreground)]"
+        href="/app/sync"
+      />
+      <FooterItem
+        icon={CreditCard}
+        label="Plano"
+        value="Trial"
+        color="text-[color:var(--muted-foreground)]"
+        href="/app/billing"
+      />
+    </section>
+  );
+}
+
+function FooterItem({
+  icon: Icon,
+  label,
+  value,
+  color,
+  href,
+}: {
+  icon: typeof Building2;
+  label: string;
+  value: string;
+  color: string;
+  href: string;
+}) {
+  return (
+    <Link href={href} className="flex items-center gap-3 hover:bg-[color:var(--muted)] rounded-md p-1 -m-1">
+      <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[color:var(--muted)]">
+        <Icon className="h-3.5 w-3.5 text-[color:var(--muted-foreground)]" />
+      </span>
+      <div>
+        <p className="text-[10px] uppercase tracking-wide text-[color:var(--muted-foreground)]">
+          {label}
+        </p>
+        <p className={`font-medium ${color}`}>{value}</p>
+      </div>
     </Link>
   );
 }

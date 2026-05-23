@@ -556,3 +556,116 @@ Legenda: ⏳ pendente · 🚧 em andamento · ✅ concluído · ⚠️ bloqueado
 4. Documentação atualizada (este arquivo + `03_CONTEXTO.md`).
 5. README atualizado se afetar setup.
 6. Smoke manual do fluxo principal feito.
+
+---
+
+# 🌊 Onda 4 — Redesign BI AZUL (Copiloto Financeiro com IA)
+
+> A partir de 2026-05-22 o produto foi renomeado de **BlueMetrics** para **BI AZUL**
+> e a arquitetura foi orientada para *copiloto financeiro com IA*. Esta onda
+> reescreve módulos prioritários sem quebrar o existente — paralela e incremental.
+
+## Princípios desta onda
+
+1. **Aproveitar o que existe** — não reescrever queries/componentes que já funcionam
+2. **IA como camada de produto**, não só backend — chat, dashboards adaptáveis, cards inteligentes
+3. **Tenants sem Sale são cidadãos de primeira classe** — todas análises caem em FinancialEntry
+4. **Modo demo sempre disponível** — quando LLM desativada, regras + templates retornam dados úteis
+5. **Single endpoint para Home** — `/api/dashboards/overview` agrega tudo (1 chamada, latência baixa)
+
+## Fase 1 — Visão Geral premium ✅ CONCLUÍDA (2026-05-22)
+
+**Backend:**
+- `apps/analytics/kpis_v2.py` (novo, ~340 linhas):
+  - Períodos: `month_period()`, `previous_month_period()`
+  - Core: `cash_in_period`, `cash_out_period`, `net_profit_period`, `net_margin_pct`, `revenue_growth_pct`
+  - Despesas: `expense_breakdown` (fixos vs variáveis por heurística PT-BR), `contribution_margin_pct`, `breakeven_point`, `above_breakeven`
+  - EBITDA simplificado (`ebitda` exclui impostos/juros via lista `_NON_OPERATIONAL_HINTS`)
+  - Caixa: `cash_balance` (saldo acumulado), `working_capital`, `burn_rate(months)`, `cash_forecast(days)`
+  - **`financial_health_score(tenant_id)`** — 0-100 ponderado por 4 componentes
+  - `rfv_segments` (Campeões/Fiéis/Em risco/Perdidos/Novos/Alto valor)
+  - `abc_curve` (Curva ABC de produtos por valor de estoque ou vendas), `stagnant_products`
+- `apps/analytics/smart_cards.py` (novo) — 8 geradores:
+  - `card_profit_change`, `card_breakeven`, `card_cash_at_risk`, `card_expense_surge`,
+    `card_low_margin_products`, `card_revenue_decel`, `card_overdue_high`, `card_supplier_concentration`
+- `GET /api/dashboards/overview` (novo endpoint, em `views.py`) — agrega 25+ campos em uma chamada
+
+**Frontend:**
+- `components/overview/score-gauge.tsx` — gauge SVG circular animado
+- `components/overview/smart-card.tsx` — card de alerta clicável por severidade
+- `app/app/page.tsx` — Visão Geral reescrita: header + smart cards + KPIs + score + BEP + forecast + cashflow + 4 rankings + footer de sistema
+
+**Validação (TABUAS):**
+```
+Score saúde: 40/100 (Regular)
+Faturamento mai/26: R$ 265.784 (+50,1% MoM)
+EBITDA: R$ -2.704 · BEP: R$ 1.01M (atual 26%)
+Forecast 30d: R$ -469.778 (EM RISCO)
+4 cards inteligentes ativos
+```
+
+## Fase 2 — Dashboards Executivo + Financeiro (próxima)
+
+**Backend:**
+- Adicionar ao `financial_summary` (kpis.py): EBITDA, capital de giro, burn rate, contribuição
+- Novos endpoints opcionais: `GET /api/dashboards/dre` (DRE simplificado por categoria)
+- `roi_operational(tenant_id, period)` — ROI sobre custos operacionais
+
+**Frontend:**
+- Reescrever `/app/dashboards/executivo` com layout SaaS premium (Score + EBITDA + Crescimento mensal + Projeção financeira)
+- Reescrever `/app/dashboards/financeiro` com seções: DRE, Capital de giro, Burn rate, Custos fixos/variáveis, Alertas (caixa negativo, inadimplência, queda margem)
+
+## Fase 3 — Comercial + Vendas + Insights central
+
+**Backend:**
+- `sales_forecast` (próximo mês baseado em tendência), `repurchase_rate`, `ltv_avg`
+- Endpoint `/api/dashboards/predictive` — previsões IA (caixa, faturamento, inadimplência)
+
+**Frontend:**
+- `/app/dashboards/comercial` — meta vs realizado, LTV, taxa recompra, ranking vendedores
+- `/app/dashboards/insights` — central preditiva com tendências
+- `/app/sales` — gráfico de evolução + Curva ABC
+
+## Fase 4 — Clientes (RFV) + Produtos (ABC)
+
+**Backend:**
+- `customer_churn_rate`, `customer_retention`, `customer_frequency`
+- `product_turnover_days`, `stock_coverage`, `reorder_suggestion`
+
+**Frontend:**
+- `/app/customers` — RFV badges + segmentos lado a lado (Champions, Loyal, At Risk, Lost)
+- `/app/products` — Curva ABC visual (gráfico Pareto), produtos parados em destaque, sugestão de recompra
+
+## Fase 5 — Metas + IA copiloto avançada
+
+**Backend:**
+- `/api/goals/simulate` — simulador "quanto preciso vender pra bater meta"
+- `apps/insights/digest.py` — gerador de resumo executivo diário/semanal (Markdown + opcional envio por email via Resend)
+- Função `forecast_revenue(days, method="linear|seasonal")` para projeções
+
+**Frontend:**
+- `/app/goals` — barra de progresso animada, simulador interativo
+- `/app/ai` — sidebar com "Resumo executivo do dia" gerado automaticamente
+- Settings: configuração de alertas personalizados (thresholds), preferências de IA
+
+## Histórico de mudanças recentes (não-fases)
+
+### 2026-05-22 · Ondas paralelas (correções e expansões durante o redesign)
+
+- **Conta Azul v2 — endpoints corretos descobertos** (ver [`06_CONTA_AZUL_API.md`](06_CONTA_AZUL_API.md)):
+  - `/v1/venda` → `/v1/venda/busca` (com `data_inicio/data_fim`)
+  - `/v1/vendedor` → `/v1/venda/vendedores` (array no top-level, sem paginação)
+  - `/v1/financeiro/contas-a-receber` → `/v1/financeiro/eventos-financeiros/contas-a-receber/buscar` (com `data_vencimento_de/_ate` obrigatórios)
+  - Idem para contas-a-pagar
+  - Schema da v2 usa **snake_case** (`valor_venda`, `custo_medio`, `data_vencimento`, `categorias` array, `situacao: {nome}`)
+- **Mapper de produto** agora extrai `valor_venda`, `custo_medio`, `saldo` (estoque); novo campo `Product.stock_balance` (migration `0002_product_stock_balance`)
+- **Mapper financeiro** usa `total` (não `valor`); `categorias[0].id` (array); `status_traduzido` PT-BR uppercase; `paid_at` extraído de `data_alteracao` quando status=ACQUITTED
+- **Auto-criação de Category** no `sync_financial` para categorias que aparecem nos lançamentos mas não em `/categorias` (este último retorna apenas 10 itens; TABUAS tinha 78 categorias reais)
+- **`apps/insights/llm.py`** (novo): adapter OpenAI/Anthropic com fallback gracioso. `INSIGHT_LLM_PROVIDER` env var
+- **`apps/insights/ai_views.py`** (novo): endpoints `POST /api/insights/ask` (chat) e `POST /api/insights/analyze` (dashboard dinâmico)
+- **5 novas regras de Insights** baseadas em FinancialEntry: `top_expense_category`, `top_revenue_category`, `upcoming_payables`, `supplier_concentration`, `cash_in_trend`
+- **URLs Django**: `bluemetrics/urls.py` migrado para `re_path(r"^api/.../?")` para tolerar trailing slash perdido pelo Next.js no rewrite
+- **Página Customers** reformulada com filtros tipo (Cliente/Fornecedor/Ativos) e colunas baseadas em FinancialEntry (recebido/pago/transações/última)
+- **Página Products** com KPIs de estoque (valor total, unidades, SKUs) + colunas Custo médio/Preço venda (com aviso quando vazio)/Margem/Estoque/Valor estoque
+- **Página Sales** com banner amigável quando tenant não usa módulo de venda
+

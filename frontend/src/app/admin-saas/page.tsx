@@ -28,7 +28,7 @@ export default function AdminSaasHome() {
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Visão geral SaaS</h1>
         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-          Métricas operacionais do BlueMetrics.
+          Métricas operacionais do BI AZUL.
         </p>
       </header>
 

@@ -132,7 +132,7 @@ function Benefits() {
     <section id="beneficios" className="border-b border-[color:var(--border)] py-20">
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeader
-          eyebrow="Por que BlueMetrics"
+          eyebrow="Por que BI AZUL"
           title="Você cuida do negócio. A gente cuida dos números."
         />
         <div className="mt-12 grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -381,7 +381,7 @@ function SiteFooter() {
         <div className="flex items-center gap-4">
           <Logo />
         </div>
-        <p>© {new Date().getFullYear()} BlueMetrics. Todos os direitos reservados.</p>
+        <p>© {new Date().getFullYear()} BI AZUL. Todos os direitos reservados.</p>
       </div>
     </footer>
   );

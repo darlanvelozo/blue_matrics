@@ -8,9 +8,11 @@ import { EmptyDashboardState } from "@/components/dashboards/empty-state";
 import { FiltersPanel, type DashboardFilters } from "@/components/dashboards/filters-panel";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { PeriodFilter } from "@/components/dashboards/period-filter";
+import { RankingList } from "@/components/dashboards/ranking-list";
 import { ReportActions } from "@/components/dashboards/report-actions";
 import { getFinancial } from "@/lib/dashboards";
 import { usePeriod } from "@/lib/use-period";
+import { formatCurrencyBRL } from "@/lib/utils";
 
 export default function FinancialDashboardPage() {
   return (
@@ -118,8 +120,141 @@ function Inner() {
               <NetProfitChart data={data.dre_monthly} />
             </CardContent>
           </Card>
+
+          <section className="grid gap-4 md:grid-cols-2">
+            <RankingList
+              title="Top categorias — receitas"
+              description="Categorias com maior volume recebido no período"
+              rows={data.top_receivable_categories.map((c) => ({
+                id: c.category_id,
+                name: c.name,
+                total: c.total,
+                count: c.count,
+                countLabel: "lançamentos",
+              }))}
+            />
+            <RankingList
+              title="Top categorias — despesas"
+              description="Categorias com maior volume pago no período"
+              rows={data.top_payable_categories.map((c) => ({
+                id: c.category_id,
+                name: c.name,
+                total: c.total,
+                count: c.count,
+                countLabel: "lançamentos",
+              }))}
+            />
+          </section>
+
+          <section className="grid gap-4 md:grid-cols-2">
+            <RankingList
+              title="Top clientes — recebimentos"
+              description="Quem mais pagou para você no período"
+              rows={data.top_receivable_customers.map((c) => ({
+                id: c.customer_id,
+                name: c.name,
+                total: c.total,
+                count: c.count,
+                countLabel: "transações",
+              }))}
+            />
+            <RankingList
+              title="Top fornecedores — pagamentos"
+              description="Para quem você mais pagou no período"
+              rows={data.top_payable_suppliers.map((c) => ({
+                id: c.customer_id,
+                name: c.name,
+                total: c.total,
+                count: c.count,
+                countLabel: "transações",
+              }))}
+            />
+          </section>
+
+          <section className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>A receber — próximos dias</CardTitle>
+                <p className="text-xs text-[color:var(--muted-foreground)]">
+                  Lançamentos em aberto, com vencimento futuro
+                </p>
+              </CardHeader>
+              <CardContent>
+                <ForecastTable
+                  rows={[
+                    { label: "30 dias", ...data.upcoming_receivables_30d },
+                    { label: "60 dias", ...data.upcoming_receivables_60d },
+                    { label: "90 dias", ...data.upcoming_receivables_90d },
+                  ]}
+                  highlight={data.overdue_receivables}
+                  highlightLabel="Vencidos hoje"
+                />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>A pagar — próximos dias</CardTitle>
+                <p className="text-xs text-[color:var(--muted-foreground)]">
+                  Compromissos futuros (pendentes/atrasados)
+                </p>
+              </CardHeader>
+              <CardContent>
+                <ForecastTable
+                  rows={[
+                    { label: "30 dias", ...data.upcoming_payables_30d },
+                    { label: "60 dias", ...data.upcoming_payables_60d },
+                    { label: "90 dias", ...data.upcoming_payables_90d },
+                  ]}
+                  highlight={data.overdue_payables}
+                  highlightLabel="Vencidos hoje"
+                />
+              </CardContent>
+            </Card>
+          </section>
         </>
       )}
+    </div>
+  );
+}
+
+function ForecastTable({
+  rows,
+  highlight,
+  highlightLabel,
+}: {
+  rows: Array<{ label: string; total: number; count: number }>;
+  highlight: { total: number; count: number };
+  highlightLabel: string;
+}) {
+  return (
+    <div className="space-y-3">
+      {highlight.count > 0 && (
+        <div className="flex items-center justify-between rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm">
+          <span className="font-medium text-red-600">{highlightLabel}</span>
+          <span className="font-mono text-xs tabular-nums">
+            {formatCurrencyBRL(highlight.total)}
+            <span className="ml-1 text-[10px] text-[color:var(--muted-foreground)]">
+              ({highlight.count})
+            </span>
+          </span>
+        </div>
+      )}
+      <ul className="space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.label}
+            className="flex items-center justify-between text-sm"
+          >
+            <span className="text-[color:var(--muted-foreground)]">{r.label}</span>
+            <span className="font-mono text-xs tabular-nums">
+              {formatCurrencyBRL(r.total)}
+              <span className="ml-1 text-[10px] text-[color:var(--muted-foreground)]">
+                ({r.count})
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
