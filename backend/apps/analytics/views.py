@@ -134,6 +134,8 @@ class FinancialDashboardView(APIView):
 
 
 class CommercialDashboardView(APIView):
+    """Comercial premium: KPIs Sale + cash_in + forecast + LTV + recompra."""
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request) -> Response:
@@ -144,10 +146,43 @@ class CommercialDashboardView(APIView):
             period, comparison, filters = _parse_params(request)
         except ValueError as e:
             return _bad_request(str(e))
+
         data = kpis.commercial_summary(tenant.id, period, comparison, filters)
         data["has_data"] = kpis.has_any_data(tenant.id)
         data["filters_applied"] = not filters.is_empty()
+
+        # v2 additions
+        data["commercial_kpis"] = kpis_v2.commercial_kpis(tenant.id, period)
+        data["ltv"] = kpis_v2.ltv_estimate(tenant.id, months_back=12)
+        data["repurchase_rate"] = kpis_v2.repurchase_rate(tenant.id, window_days=90)
+        data["revenue_forecast_30d"] = kpis_v2.revenue_forecast(tenant.id, days_ahead=30)
+        data["revenue_forecast_90d"] = kpis_v2.revenue_forecast(tenant.id, days_ahead=90)
+        data["monthly_growth"] = kpis_v2.monthly_growth_series(tenant.id, period)
+        data["abc_curve"] = kpis_v2.abc_curve(tenant.id, by="sales")
         return Response(data)
+
+
+class PredictiveDashboardView(APIView):
+    """
+    GET /api/dashboards/predictive
+
+    Central preditiva (alimenta /app/insights v2): previsões de caixa,
+    receita, despesa, risco de inadimplência, LTV, recompra.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        tenant = get_request_tenant(request)
+        if tenant is None:
+            return _bad_request("Tenant não encontrado.", "no_tenant")
+
+        return Response({
+            "has_data": kpis.has_any_data(tenant.id),
+            "predictive": kpis_v2.predictive_overview(tenant.id),
+            "health_score": kpis_v2.financial_health_score(tenant.id),
+            "alerts": kpis_v2.alerts(tenant.id),
+        })
 
 
 class OverviewView(APIView):

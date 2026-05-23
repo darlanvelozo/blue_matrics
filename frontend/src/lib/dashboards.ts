@@ -212,6 +212,14 @@ export interface CommercialDashboard {
   top_products: TopProduct[];
   by_salesperson: BySalesperson[];
   top_receivable_customers: TopFinancialCustomer[];
+  // v2 additions
+  commercial_kpis: CommercialKpis;
+  ltv: LtvInfo;
+  repurchase_rate: RepurchaseInfo;
+  revenue_forecast_30d: RevenueForecast;
+  revenue_forecast_90d: RevenueForecast;
+  monthly_growth: MonthlyGrowthPoint[];
+  abc_curve: AbcCurve;
 }
 
 export interface DashboardQuery {
@@ -241,6 +249,100 @@ function buildQuery(opts: DashboardQuery = {}): string {
   if (opts.category) params.set("category", String(opts.category));
   return params.toString() ? `?${params}` : "";
 }
+
+// ============================================================================
+// Tipos preditivos (Fase 3)
+// ============================================================================
+export interface RevenueForecast {
+  forecast_total: number;
+  forecast_daily_avg: number;
+  baseline_avg_monthly: number;
+  trend_pct_monthly: number;
+  confidence: "high" | "medium" | "low";
+  has_seasonality: boolean;
+  last_months: Array<{ month: string; revenue: number }>;
+  days_ahead: number;
+  method?: string;
+}
+
+export interface LtvInfo {
+  ltv_avg: number;
+  total_revenue: number;
+  unique_customers: number;
+  via_sales: number;
+  via_financial: number;
+  months_back: number;
+}
+
+export interface RepurchaseInfo {
+  rate_pct: number;
+  total_customers: number;
+  repurchased: number;
+  window_days: number;
+}
+
+export interface AbcCurveRow {
+  product_id: number;
+  name: string;
+  sku?: string;
+  value: number;
+  stock?: number;
+  class: "A" | "B" | "C";
+  cumulative_pct: number;
+}
+
+export interface AbcCurve {
+  total: number;
+  by: string;
+  rows: AbcCurveRow[];
+  counts: { A: number; B: number; C: number };
+}
+
+export interface CommercialKpis {
+  revenue_sale: number;
+  revenue_cash: number;
+  num_sales: number;
+  avg_ticket_sale: number;
+  by_salesperson: BySalesperson[];
+  top_products: TopProduct[];
+  top_customers: TopCustomer[];
+  top_revenue_categories: TopCategory[];
+}
+
+export interface PredictiveResponse {
+  has_data: boolean;
+  predictive: {
+    revenue_forecast: {
+      "30d": RevenueForecast;
+      "60d": RevenueForecast;
+      "90d": RevenueForecast;
+    };
+    expense_forecast_30d: {
+      forecast_total: number;
+      baseline_avg_monthly: number;
+      days_ahead: number;
+    };
+    cash_forecast: {
+      "30d": CashForecastInfo;
+      "60d": CashForecastInfo;
+      "90d": CashForecastInfo;
+    };
+    overdue_risk: {
+      overdue_amount: number;
+      open_amount: number;
+      risk_pct: number;
+    };
+    ltv: LtvInfo;
+    repurchase: RepurchaseInfo;
+  };
+  health_score: HealthScore;
+  alerts: FinancialAlert[];
+}
+
+export function getPredictive() {
+  return apiFetch<PredictiveResponse>("/api/dashboards/predictive");
+}
+
 
 export function getExecutive(opts: DashboardQuery = {}) {
   return apiFetch<ExecutiveDashboard & { filters_applied?: boolean }>(

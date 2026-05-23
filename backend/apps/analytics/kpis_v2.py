@@ -939,3 +939,288 @@ def alerts(tenant_id: int) -> list[dict[str, Any]]:
         })
 
     return out
+
+
+# ===========================================================================
+# FASE 3 — KPIs preditivos e comerciais
+# ===========================================================================
+def revenue_forecast(
+    tenant_id: int, *, days_ahead: int = 30, lookback_months: int = 6,
+) -> dict[str, Any]:
+    """
+    Previsão de receita para próximos `days_ahead` dias.
+
+    Método: regressão linear simples sobre receita mensal dos últimos
+    `lookback_months` meses. Robusto, sem libs externas. Quando há
+    sazonalidade clara (variação > 50% entre meses), inclui flag.
+
+    Retorna:
+      {forecast_total, forecast_daily_avg, baseline_avg_monthly,
+       trend_pct_monthly, confidence, has_seasonality, last_months[]}
+    """
+    today = timezone.now().date()
+    start = today - timedelta(days=30 * lookback_months)
+    period = Period(start=start, end=today)
+    monthly = monthly_growth_series(tenant_id, period)
+    if not monthly:
+        return {
+            "forecast_total": 0.0,
+            "forecast_daily_avg": 0.0,
+            "baseline_avg_monthly": 0.0,
+            "trend_pct_monthly": 0.0,
+            "confidence": "low",
+            "has_seasonality": False,
+            "last_months": [],
+            "days_ahead": days_ahead,
+        }
+
+    revenues = [m["revenue"] for m in monthly]
+    n = len(revenues)
+    avg = sum(revenues) / n if n else 0
+
+    # regressão linear y = a + b*x (x = 0..n-1)
+    if n >= 2 and avg > 0:
+        xs = list(range(n))
+        x_mean = sum(xs) / n
+        y_mean = avg
+        num = sum((xs[i] - x_mean) * (revenues[i] - y_mean) for i in range(n))
+        den = sum((xs[i] - x_mean) ** 2 for i in range(n))
+        slope = num / den if den else 0.0
+        intercept = y_mean - slope * x_mean
+        # Receita prevista no próximo mês (x = n)
+        forecast_next_month = max(0.0, intercept + slope * n)
+        trend_pct = (slope / avg * 100) if avg else 0.0
+    else:
+        forecast_next_month = avg
+        slope = 0.0
+        trend_pct = 0.0
+
+    # Sazonalidade: variação máxima entre meses
+    if revenues:
+        rmin, rmax = min(revenues), max(revenues)
+        has_seasonality = avg > 0 and (rmax - rmin) / avg > 0.5
+    else:
+        has_seasonality = False
+
+    # Confiança: alta se temos 6+ meses e baixa variabilidade
+    if n >= 6 and not has_seasonality:
+        confidence = "high"
+    elif n >= 3:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    forecast_total = (forecast_next_month / 30.0) * days_ahead
+
+    return {
+        "forecast_total": forecast_total,
+        "forecast_daily_avg": forecast_next_month / 30.0,
+        "baseline_avg_monthly": avg,
+        "trend_pct_monthly": trend_pct,
+        "confidence": confidence,
+        "has_seasonality": has_seasonality,
+        "last_months": [
+            {"month": m["month"], "revenue": m["revenue"]} for m in monthly
+        ],
+        "days_ahead": days_ahead,
+        "method": "linear_regression",
+    }
+
+
+def expense_forecast(tenant_id: int, *, days_ahead: int = 30) -> dict[str, Any]:
+    """Previsão simples de despesas (similar a revenue_forecast)."""
+    today = timezone.now().date()
+    start = today - timedelta(days=180)
+    period = Period(start=start, end=today)
+    monthly = monthly_growth_series(tenant_id, period)
+    if not monthly:
+        return {
+            "forecast_total": 0.0,
+            "baseline_avg_monthly": 0.0,
+            "trend_pct_monthly": 0.0,
+            "days_ahead": days_ahead,
+        }
+    expenses = [m["expense"] for m in monthly]
+    avg = sum(expenses) / len(expenses) if expenses else 0
+    forecast = (avg / 30.0) * days_ahead
+    return {
+        "forecast_total": forecast,
+        "baseline_avg_monthly": avg,
+        "trend_pct_monthly": 0.0,  # simplificado
+        "days_ahead": days_ahead,
+    }
+
+
+def ltv_estimate(tenant_id: int, *, months_back: int = 12) -> dict[str, Any]:
+    """
+    LTV médio estimado por cliente.
+
+    Para tenants com Sale: receita média / nº clientes únicos com venda.
+    Para tenants sem Sale (varejo): cash_in dividido por clientes únicos
+    identificados em FinancialEntry receivable.
+    """
+    today = timezone.now().date()
+    period = Period(
+        start=today - timedelta(days=30 * months_back),
+        end=today,
+    )
+
+    # Receita total via FinancialEntry (mais robusto pra varejo)
+    total_revenue = cash_in_period(tenant_id, period)
+
+    # Clientes únicos identificados
+    customer_ids = (
+        FinancialEntry.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            direction=FinancialEntry.Direction.RECEIVABLE,
+            status=FinancialEntry.Status.PAID,
+            paid_at__gte=period.start,
+            paid_at__lte=period.end,
+            customer__isnull=False,
+        )
+        .values_list("customer_id", flat=True)
+        .distinct()
+    )
+    n_customers = len(list(customer_ids))
+
+    # Clientes via Sale (se houver)
+    sale_customer_ids = (
+        Sale.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            status=Sale.Status.CLOSED,
+            issued_at__gte=_aware(period.start),
+            issued_at__lte=_aware(period.end, end=True),
+            customer__isnull=False,
+        )
+        .values_list("customer_id", flat=True)
+        .distinct()
+    )
+    n_sale_customers = len(list(sale_customer_ids))
+
+    # Use o maior dos dois (ou via Sale se houver)
+    effective = max(n_customers, n_sale_customers)
+    ltv = (total_revenue / effective) if effective > 0 else 0.0
+
+    return {
+        "ltv_avg": ltv,
+        "total_revenue": total_revenue,
+        "unique_customers": effective,
+        "via_sales": n_sale_customers,
+        "via_financial": n_customers,
+        "months_back": months_back,
+    }
+
+
+def repurchase_rate(tenant_id: int, *, window_days: int = 90) -> dict[str, Any]:
+    """
+    Taxa de recompra: % de clientes que voltaram a comprar dentro da janela.
+
+    Calculado em FinancialEntry receivable (mais robusto que Sale para varejo):
+    clientes com 2+ recebimentos em janelas distintas / total de clientes únicos.
+    """
+    from django.db.models import Count
+
+    today = timezone.now().date()
+    cutoff = today - timedelta(days=window_days * 2)  # 2 janelas
+
+    base_qs = FinancialEntry.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        direction=FinancialEntry.Direction.RECEIVABLE,
+        status=FinancialEntry.Status.PAID,
+        paid_at__gte=cutoff,
+        customer__isnull=False,
+    )
+
+    customers_with_counts = (
+        base_qs.values("customer_id")
+        .annotate(c=Count("id"))
+    )
+
+    total = customers_with_counts.count()
+    repurchased = sum(1 for r in customers_with_counts if r["c"] >= 2)
+    rate = (repurchased / total * 100) if total else 0.0
+
+    return {
+        "rate_pct": rate,
+        "total_customers": total,
+        "repurchased": repurchased,
+        "window_days": window_days,
+    }
+
+
+def commercial_kpis(tenant_id: int, period: Period) -> dict[str, Any]:
+    """
+    Bundle de KPIs comerciais — usa Sale quando disponível, fallback
+    em FinancialEntry receivable.
+    """
+    from apps.analytics import kpis as kpi_v1
+
+    rev_sale = float(kpi_v1.revenue(tenant_id, period))
+    n_sales = kpi_v1.num_sales(tenant_id, period)
+    avg_ticket_sale = float(kpi_v1.avg_ticket(tenant_id, period))
+    cash_in = cash_in_period(tenant_id, period)
+
+    return {
+        "revenue_sale": rev_sale,
+        "revenue_cash": cash_in,
+        "num_sales": n_sales,
+        "avg_ticket_sale": avg_ticket_sale,
+        "by_salesperson": kpi_v1.sales_by_salesperson(tenant_id, period),
+        "top_products": kpi_v1.top_products(tenant_id, period, limit=10),
+        "top_customers": kpi_v1.top_customers(tenant_id, period, limit=10),
+        "top_revenue_categories": kpi_v1.top_categories(
+            tenant_id, period, direction="receivable", limit=10,
+        ),
+    }
+
+
+def predictive_overview(tenant_id: int) -> dict[str, Any]:
+    """Bundle de previsões para a central de insights."""
+    today = timezone.now().date()
+    # Forecasts
+    rev_30 = revenue_forecast(tenant_id, days_ahead=30)
+    rev_60 = revenue_forecast(tenant_id, days_ahead=60)
+    rev_90 = revenue_forecast(tenant_id, days_ahead=90)
+    exp_30 = expense_forecast(tenant_id, days_ahead=30)
+    cash_30 = cash_forecast(tenant_id, days=30)
+    cash_60 = cash_forecast(tenant_id, days=60)
+    cash_90 = cash_forecast(tenant_id, days=90)
+
+    # Cohort / inadimplência
+    overdue_recv = _f(
+        FinancialEntry.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            direction=FinancialEntry.Direction.RECEIVABLE,
+            status__in=[FinancialEntry.Status.PENDING, FinancialEntry.Status.OVERDUE],
+            due_date__lt=today,
+        ).aggregate(t=Sum("amount"))["t"]
+    )
+    open_recv = _f(
+        FinancialEntry.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            direction=FinancialEntry.Direction.RECEIVABLE,
+            status__in=[FinancialEntry.Status.PENDING, FinancialEntry.Status.OVERDUE],
+        ).aggregate(t=Sum("amount"))["t"]
+    )
+    overdue_risk_pct = (overdue_recv / open_recv * 100) if open_recv else 0.0
+
+    return {
+        "revenue_forecast": {
+            "30d": rev_30,
+            "60d": rev_60,
+            "90d": rev_90,
+        },
+        "expense_forecast_30d": exp_30,
+        "cash_forecast": {
+            "30d": cash_30,
+            "60d": cash_60,
+            "90d": cash_90,
+        },
+        "overdue_risk": {
+            "overdue_amount": overdue_recv,
+            "open_amount": open_recv,
+            "risk_pct": overdue_risk_pct,
+        },
+        "ltv": ltv_estimate(tenant_id),
+        "repurchase": repurchase_rate(tenant_id, window_days=90),
+    }

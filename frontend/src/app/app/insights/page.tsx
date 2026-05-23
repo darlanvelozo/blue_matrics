@@ -17,10 +17,13 @@ import {
   XCircle,
   type LucideIcon,
 } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
+import { getPredictive, type PredictiveResponse } from "@/lib/dashboards";
+import { formatCurrencyBRL, cn } from "@/lib/utils";
 import {
   dismissInsight,
   generateInsights,
@@ -85,6 +88,12 @@ export default function InsightsPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["insights"],
     queryFn: listInsights,
+  });
+
+  const predictive = useQuery({
+    queryKey: ["predictive"],
+    queryFn: getPredictive,
+    staleTime: 60_000,
   });
 
   const generateMutation = useMutation({
@@ -172,6 +181,9 @@ export default function InsightsPage() {
           )}
         </Banner>
       )}
+
+      {/* SEÇÃO PREDITIVA — previsão IA + risco de inadimplência */}
+      {predictive.data && <PredictivePanel data={predictive.data} />}
 
       {isLoading ? (
         <div className="grid gap-3">
@@ -323,5 +335,136 @@ function Banner({
       )}
       <span>{children}</span>
     </div>
+  );
+}
+
+function PredictivePanel({ data }: { data: PredictiveResponse }) {
+  const p = data.predictive;
+  const confidence30 = p.revenue_forecast["30d"].confidence;
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-[color:var(--muted-foreground)]">
+          <Sparkles className="h-3 w-3 text-[color:var(--primary)]" />
+          Previsões IA · próximos dias
+        </h2>
+        <Link
+          href="/app/ai"
+          className="text-xs font-medium text-[color:var(--primary)] hover:underline"
+        >
+          Conversar com IA →
+        </Link>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <PredictiveCard
+          label="Receita prevista 30d"
+          value={p.revenue_forecast["30d"].forecast_total}
+          format="currency"
+          subtitle={`tendência ${p.revenue_forecast["30d"].trend_pct_monthly > 0 ? "+" : ""}${p.revenue_forecast["30d"].trend_pct_monthly.toFixed(1).replace(".", ",")}%/mês`}
+          confidence={confidence30}
+        />
+        <PredictiveCard
+          label="Receita prevista 90d"
+          value={p.revenue_forecast["90d"].forecast_total}
+          format="currency"
+        />
+        <PredictiveCard
+          label="Despesa prevista 30d"
+          value={p.expense_forecast_30d.forecast_total}
+          format="currency"
+          subtitle={`média histórica: ${formatCurrencyBRL(p.expense_forecast_30d.baseline_avg_monthly)}/mês`}
+          negative
+        />
+        <PredictiveCard
+          label="Saldo projetado 30d"
+          value={p.cash_forecast["30d"].projected_balance}
+          format="currency"
+          atRisk={p.cash_forecast["30d"].at_risk}
+        />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <PredictiveCard
+          label="LTV médio"
+          value={p.ltv.ltv_avg}
+          format="currency"
+          subtitle={`${p.ltv.unique_customers} clientes únicos`}
+        />
+        <PredictiveCard
+          label="Taxa de recompra (90d)"
+          value={p.repurchase.rate_pct}
+          format="percent"
+          subtitle={`${p.repurchase.repurchased}/${p.repurchase.total_customers} clientes`}
+        />
+        <PredictiveCard
+          label="Risco de inadimplência"
+          value={p.overdue_risk.risk_pct}
+          format="percent"
+          negative
+          subtitle={`${formatCurrencyBRL(p.overdue_risk.overdue_amount)} vencido`}
+        />
+      </div>
+    </section>
+  );
+}
+
+function PredictiveCard({
+  label,
+  value,
+  format,
+  subtitle,
+  confidence,
+  negative,
+  atRisk,
+}: {
+  label: string;
+  value: number;
+  format: "currency" | "percent";
+  subtitle?: string;
+  confidence?: "high" | "medium" | "low";
+  negative?: boolean;
+  atRisk?: boolean;
+}) {
+  const formatted =
+    format === "currency"
+      ? formatCurrencyBRL(value)
+      : `${value.toFixed(1).replace(".", ",")}%`;
+  const confMap: Record<string, { label: string; cls: string }> = {
+    high: { label: "alta", cls: "bg-emerald-500/10 text-emerald-700" },
+    medium: { label: "média", cls: "bg-amber-500/10 text-amber-700" },
+    low: { label: "baixa", cls: "bg-red-500/10 text-red-700" },
+  };
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-[color:var(--muted-foreground)]">
+            {label}
+          </p>
+          {confidence && (
+            <span className={cn("rounded-full px-1.5 py-0.5 text-[9px] font-semibold", confMap[confidence].cls)}>
+              {confMap[confidence].label}
+            </span>
+          )}
+          {atRisk && (
+            <span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-red-700">
+              RISCO
+            </span>
+          )}
+        </div>
+        <p
+          className={cn(
+            "mt-2 font-mono text-xl font-bold tabular-nums",
+            atRisk || (negative && value > 0) ? "text-red-600" : value > 0 ? "text-foreground" : "text-[color:var(--muted-foreground)]",
+          )}
+        >
+          {formatted}
+        </p>
+        {subtitle && (
+          <p className="mt-1 text-[10px] text-[color:var(--muted-foreground)]">{subtitle}</p>
+        )}
+      </CardContent>
+    </Card>
   );
 }

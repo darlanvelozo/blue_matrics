@@ -60,6 +60,26 @@ def _period_last_n_days(days: int) -> Period:
 # Ordem importa: a primeira intent cujo padrão casar vence.
 # Intents mais específicas vêm antes (top_suppliers antes de top_expenses).
 INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("forecast_revenue", [
+        r"previs[ãa]o.*(receita|fatur)",
+        r"projet[ãa]?\w+\s.*(receita|fatur)",
+        r"quanto.*vou.*(receb|fatur)",
+        r"tendência.*(receita|fatur|venda)",
+    ]),
+    ("ltv", [
+        r"\bltv\b|lifetime value|valor.*vit[áa]l",
+        r"quanto.*vale.*um.*cliente",
+        r"ticket m[ée]dio.*vida",
+    ]),
+    ("repurchase", [
+        r"recompr\w*|retor\w*|volt\w+.*comprar",
+        r"taxa.*reten[çc][ãa]o|reten[çc][ãa]o.*cliente",
+    ]),
+    ("forecast_cash", [
+        r"previs[ãa]o.*caixa|forecast.*caixa",
+        r"caixa.*negativ\w*|caixa.*ficar",
+        r"projet\w+.*caixa",
+    ]),
     ("top_suppliers", [
         r"fornecedor\w*",
         r"para quem.*pag",
@@ -294,6 +314,77 @@ def run_analysis(tenant_id: int, intent: str, *, days: int, limit: int = 10) -> 
                 "value": up_r["total"] - up_p["total"],
                 "format": "currency",
             },
+        ]
+
+    elif intent == "forecast_revenue":
+        from apps.analytics import kpis_v2 as kv2
+        fc = kv2.revenue_forecast(tenant_id, days_ahead=days)
+        blueprint["title"] = f"Previsão de receita — próximos {days} dias"
+        confidence_pt = {"high": "alta", "medium": "média", "low": "baixa"}.get(fc["confidence"], "—")
+        blueprint["summary"] = (
+            f"Previsão (regressão linear sobre {len(fc.get('last_months', []))} meses): "
+            f"{_brl(fc['forecast_total'])} em {days} dias. "
+            f"Confiança {confidence_pt}. Tendência mensal: {fc['trend_pct_monthly']:+.1f}%."
+        )
+        blueprint["kpis"] = [
+            {"label": "Receita prevista", "value": fc["forecast_total"], "format": "currency"},
+            {"label": "Média mensal histórica", "value": fc["baseline_avg_monthly"], "format": "currency"},
+            {"label": "Tendência/mês", "value": fc["trend_pct_monthly"], "format": "percent"},
+        ]
+        if fc.get("last_months"):
+            blueprint["tables"] = [{
+                "title": "Histórico mensal",
+                "headers": ["Mês", "Receita"],
+                "rows": [[m["month"], m["revenue"]] for m in fc["last_months"]],
+                "value_columns": [1],
+            }]
+
+    elif intent == "forecast_cash":
+        from apps.analytics import kpis_v2 as kv2
+        fc = kv2.cash_forecast(tenant_id, days=days)
+        risk_str = "EM RISCO" if fc["at_risk"] else "ok"
+        blueprint["title"] = f"Projeção de caixa — {days} dias"
+        blueprint["summary"] = (
+            f"Saldo atual: {_brl(fc['current_balance'])}. "
+            f"Entradas previstas: {_brl(fc['expected_in'])}. "
+            f"Saídas: {_brl(fc['expected_out'])}. "
+            f"Saldo projetado: {_brl(fc['projected_balance'])} ({risk_str})."
+        )
+        blueprint["kpis"] = [
+            {"label": "Saldo hoje", "value": fc["current_balance"], "format": "currency"},
+            {"label": "Entradas", "value": fc["expected_in"], "format": "currency"},
+            {"label": "Saídas", "value": fc["expected_out"], "format": "currency"},
+            {"label": "Saldo projetado", "value": fc["projected_balance"], "format": "currency"},
+        ]
+
+    elif intent == "ltv":
+        from apps.analytics import kpis_v2 as kv2
+        info = kv2.ltv_estimate(tenant_id, months_back=12)
+        blueprint["title"] = "LTV — Lifetime Value médio"
+        blueprint["summary"] = (
+            f"LTV médio estimado em {_brl(info['ltv_avg'])} considerando "
+            f"{info['unique_customers']} clientes únicos e {_brl(info['total_revenue'])} "
+            f"em receita nos últimos 12 meses."
+        )
+        blueprint["kpis"] = [
+            {"label": "LTV médio", "value": info["ltv_avg"], "format": "currency"},
+            {"label": "Clientes únicos", "value": info["unique_customers"], "format": "number"},
+            {"label": "Receita 12m", "value": info["total_revenue"], "format": "currency"},
+        ]
+
+    elif intent == "repurchase":
+        from apps.analytics import kpis_v2 as kv2
+        info = kv2.repurchase_rate(tenant_id, window_days=90)
+        blueprint["title"] = "Taxa de recompra"
+        blueprint["summary"] = (
+            f"Nos últimos {info['window_days']} dias: {info['repurchased']} "
+            f"de {info['total_customers']} clientes voltaram a comprar — "
+            f"taxa de recompra {info['rate_pct']:.1f}%."
+        )
+        blueprint["kpis"] = [
+            {"label": "Taxa de recompra", "value": info["rate_pct"], "format": "percent"},
+            {"label": "Clientes que voltaram", "value": info["repurchased"], "format": "number"},
+            {"label": "Total clientes ativos", "value": info["total_customers"], "format": "number"},
         ]
 
     elif intent == "overdue":
