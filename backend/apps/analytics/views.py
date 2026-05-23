@@ -162,6 +162,49 @@ class CommercialDashboardView(APIView):
         return Response(data)
 
 
+class CustomersAnalyticsView(APIView):
+    """GET /api/analytics/customers — RFV + segmentos + clientes em risco."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        tenant = get_request_tenant(request)
+        if tenant is None:
+            return _bad_request("Tenant não encontrado.", "no_tenant")
+        rfv = kpis_v2.rfv_segments(tenant.id)
+        at_risk = kpis_v2.customer_at_risk(tenant.id, inactive_days=60)
+        ltv = kpis_v2.ltv_estimate(tenant.id, months_back=12)
+        repurchase = kpis_v2.repurchase_rate(tenant.id, window_days=90)
+        return Response({
+            "rfv": rfv,
+            "at_risk": at_risk,
+            "ltv": ltv,
+            "repurchase": repurchase,
+        })
+
+
+class ProductsAnalyticsView(APIView):
+    """GET /api/analytics/products — Curva ABC + parados + reorder."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        tenant = get_request_tenant(request)
+        if tenant is None:
+            return _bad_request("Tenant não encontrado.", "no_tenant")
+        by = request.query_params.get("by", "stock_value")
+        if by not in ("stock_value", "sales"):
+            by = "stock_value"
+        abc = kpis_v2.abc_curve(tenant.id, by=by)
+        stagnant = kpis_v2.stagnant_products(tenant.id, min_stock=1)
+        reorder = kpis_v2.reorder_suggestions(tenant.id, lookback_days=180)
+        return Response({
+            "abc": abc,
+            "stagnant": stagnant,
+            "reorder": reorder,
+        })
+
+
 class PredictiveDashboardView(APIView):
     """
     GET /api/dashboards/predictive

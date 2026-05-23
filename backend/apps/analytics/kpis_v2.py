@@ -1224,3 +1224,143 @@ def predictive_overview(tenant_id: int) -> dict[str, Any]:
         "ltv": ltv_estimate(tenant_id),
         "repurchase": repurchase_rate(tenant_id, window_days=90),
     }
+
+
+# ===========================================================================
+# FASE 4 — Sugestão de recompra e helpers
+# ===========================================================================
+def reorder_suggestions(
+    tenant_id: int, *, lookback_days: int = 180, target_coverage_days: int = 30,
+) -> dict[str, Any]:
+    """
+    Sugere produtos para recompra baseado em saídas (SaleItem) recentes.
+
+    Lógica:
+    - Calcula velocidade de saída (unidades/dia) nos últimos `lookback_days`
+    - Calcula dias de cobertura = saldo atual / velocidade
+    - Recomenda recompra quando cobertura < `target_coverage_days`
+    - Quantidade sugerida = velocidade × (target_coverage_days × 2) − saldo atual
+
+    Para tenants sem Sale, retorna lista vazia (mas inclui `stagnant`).
+    """
+    from datetime import timedelta as _td
+    from django.db.models import Count
+
+    today = timezone.now().date()
+    cutoff = _aware(today - _td(days=lookback_days))
+
+    # Saídas por produto no período
+    sales_qs = (
+        SaleItem.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            product__isnull=False,
+            sale__status=Sale.Status.CLOSED,
+            sale__issued_at__gte=cutoff,
+        )
+        .values("product_id")
+        .annotate(qty=Sum("quantity"), n=Count("id"))
+    )
+
+    suggestions: list[dict] = []
+    for row in sales_qs:
+        qty = float(row["qty"] or 0)
+        if qty <= 0:
+            continue
+        velocity = qty / lookback_days  # unidades/dia
+        product = Product.unsafe_objects.filter(
+            tenant_id=tenant_id, id=row["product_id"],
+        ).first()
+        if not product or not product.is_active:
+            continue
+        stock = float(product.stock_balance or 0)
+        coverage_days = (stock / velocity) if velocity > 0 else 9999
+        if coverage_days >= target_coverage_days:
+            continue
+        suggested_qty = max(0, velocity * (target_coverage_days * 2) - stock)
+        suggestions.append({
+            "product_id": product.id,
+            "sku": product.sku,
+            "name": product.name,
+            "stock": stock,
+            "velocity_per_day": velocity,
+            "coverage_days": round(coverage_days, 1),
+            "suggested_qty": round(suggested_qty),
+            "cost": float(product.cost or 0),
+            "reorder_cost_estimate": round(suggested_qty * float(product.cost or 0), 2),
+            "sold_in_period": qty,
+            "lookback_days": lookback_days,
+        })
+
+    # Ordenar por urgência (menor cobertura = mais urgente)
+    suggestions.sort(key=lambda s: s["coverage_days"])
+
+    return {
+        "suggestions": suggestions[:50],
+        "total_count": len(suggestions),
+        "lookback_days": lookback_days,
+        "target_coverage_days": target_coverage_days,
+    }
+
+
+def customer_at_risk(tenant_id: int, *, inactive_days: int = 60) -> list[dict]:
+    """
+    Clientes em risco: tinham frequência mas não compram há `inactive_days`.
+
+    Baseia em FinancialEntry receivable (com customer identificado) ou Sale.
+    Usado pelo intent 'customers_at_risk'.
+    """
+    from datetime import timedelta as _td
+    from django.db.models import Count
+
+    today = timezone.now().date()
+    cutoff_recent = today - _td(days=inactive_days)
+    cutoff_old = today - _td(days=365)
+
+    # Clientes com 2+ compras nos últimos 365 dias mas nenhuma nos últimos N
+    candidates = (
+        Customer.unsafe_objects.filter(tenant_id=tenant_id)
+        .annotate(
+            total_recv=Sum(
+                "financial_entries__amount",
+                filter=Q(
+                    financial_entries__direction=FinancialEntry.Direction.RECEIVABLE,
+                    financial_entries__status=FinancialEntry.Status.PAID,
+                    financial_entries__paid_at__gte=cutoff_old,
+                ),
+            ),
+            count_recv=Count(
+                "financial_entries",
+                filter=Q(
+                    financial_entries__direction=FinancialEntry.Direction.RECEIVABLE,
+                    financial_entries__status=FinancialEntry.Status.PAID,
+                    financial_entries__paid_at__gte=cutoff_old,
+                ),
+            ),
+            last_purchase=Max(
+                "financial_entries__paid_at",
+                filter=Q(
+                    financial_entries__direction=FinancialEntry.Direction.RECEIVABLE,
+                    financial_entries__status=FinancialEntry.Status.PAID,
+                ),
+            ),
+        )
+        .filter(count_recv__gte=2, last_purchase__lt=cutoff_recent)
+        .order_by("-total_recv")
+    )
+
+    result = []
+    for c in candidates[:30]:
+        days_inactive = (today - c.last_purchase).days if c.last_purchase else 9999
+        result.append({
+            "customer_id": c.id,
+            "name": c.name,
+            "total_purchased": float(c.total_recv or 0),
+            "purchases": c.count_recv,
+            "last_purchase": c.last_purchase.isoformat() if c.last_purchase else None,
+            "days_inactive": days_inactive,
+        })
+    return result
+
+
+# Necessário pelo import Q no escopo do módulo
+from django.db.models import Q  # noqa: E402

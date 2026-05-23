@@ -60,6 +60,27 @@ def _period_last_n_days(days: int) -> Period:
 # Ordem importa: a primeira intent cujo padrão casar vence.
 # Intents mais específicas vêm antes (top_suppliers antes de top_expenses).
 INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("rfv_segments", [
+        r"\brfv\b|champions|fi[ée]is|segment\w*.*cliente|cliente.*segment\w*",
+        r"clientes? (vip|champions|fi[eé]is)",
+    ]),
+    ("customers_at_risk", [
+        r"cliente.*(risco|em risco|inativo|sumi|parou.*comprar)",
+        r"quem.*parou.*(comprar|pagar)",
+    ]),
+    ("abc_products", [
+        r"\babc\b|curva.*abc|pareto",
+        r"produtos.*(80|principais|representam).*receita",
+    ]),
+    ("stagnant_products", [
+        r"produtos?.*parad\w*|estoque parado|produtos? sem.*venda",
+        r"o que.*est[oá]\s*sem girar",
+    ]),
+    ("reorder", [
+        r"recompr\w*.*produto|preciso.*comprar.*produto|repor.*estoque",
+        r"o que.*comprar.*estoque|sugest[ãa]o.*compra",
+        r"\brup?tura\b|ruptura.*estoque",
+    ]),
     ("forecast_revenue", [
         r"previs[ãa]o.*(receita|fatur)",
         r"projet[ãa]?\w+\s.*(receita|fatur)",
@@ -316,6 +337,143 @@ def run_analysis(tenant_id: int, intent: str, *, days: int, limit: int = 10) -> 
             },
         ]
 
+    elif intent == "rfv_segments":
+        from apps.analytics import kpis_v2 as kv2
+        info = kv2.rfv_segments(tenant_id)
+        counts = info.get("counts", {})
+        blueprint["title"] = "Segmentação RFV de clientes"
+        blueprint["summary"] = (
+            f"Total de {info.get('total', 0)} clientes únicos com compras. "
+            f"Champions: {counts.get('champions', 0)} · "
+            f"High value: {counts.get('high_value', 0)} · "
+            f"Loyal: {counts.get('loyal', 0)} · "
+            f"At risk: {counts.get('at_risk', 0)} · "
+            f"Lost: {counts.get('lost', 0)} · "
+            f"New: {counts.get('new', 0)}."
+        )
+        blueprint["kpis"] = [
+            {"label": k.replace("_", " ").title(), "value": v, "format": "number"}
+            for k, v in counts.items()
+        ]
+        # Top 5 champions
+        champs = info.get("segments", {}).get("champions", [])
+        if champs:
+            blueprint["tables"] = [{
+                "title": "Champions (top 5)",
+                "headers": ["Cliente", "Compras", "Total"],
+                "rows": [[c["name"], c["count"], c["total"]] for c in champs[:5]],
+                "value_columns": [2],
+            }]
+
+    elif intent == "customers_at_risk":
+        from apps.analytics import kpis_v2 as kv2
+        at_risk = kv2.customer_at_risk(tenant_id, inactive_days=60)
+        blueprint["title"] = "Clientes em risco"
+        blueprint["summary"] = (
+            f"{len(at_risk)} cliente(s) com histórico recorrente que não compram há 60+ dias. "
+            f"Total já comprado por esses: {_brl(sum(c['total_purchased'] for c in at_risk))}."
+        )
+        blueprint["kpis"] = [
+            {"label": "Clientes em risco", "value": len(at_risk), "format": "number"},
+            {
+                "label": "Valor histórico em risco",
+                "value": sum(c["total_purchased"] for c in at_risk),
+                "format": "currency",
+            },
+        ]
+        if at_risk:
+            blueprint["tables"] = [{
+                "title": "Top 10 em risco",
+                "headers": ["Cliente", "Total comprado", "Compras", "Dias inativo"],
+                "rows": [
+                    [c["name"], c["total_purchased"], c["purchases"], c["days_inactive"]]
+                    for c in at_risk[:10]
+                ],
+                "value_columns": [1],
+            }]
+
+    elif intent == "abc_products":
+        from apps.analytics import kpis_v2 as kv2
+        abc = kv2.abc_curve(tenant_id, by="sales") if any(
+            kv2.abc_curve(tenant_id, by="sales").get("rows") or []
+        ) else kv2.abc_curve(tenant_id, by="stock_value")
+        counts = abc.get("counts", {})
+        blueprint["title"] = f"Curva ABC de produtos (por {abc.get('by', 'valor')})"
+        blueprint["summary"] = (
+            f"Classe A (80% do valor): {counts.get('A', 0)} produtos · "
+            f"B (15%): {counts.get('B', 0)} · "
+            f"C (5%): {counts.get('C', 0)}. "
+            f"Total analisado: {_brl(abc.get('total', 0))}."
+        )
+        blueprint["kpis"] = [
+            {"label": "Classe A", "value": counts.get("A", 0), "format": "number"},
+            {"label": "Classe B", "value": counts.get("B", 0), "format": "number"},
+            {"label": "Classe C", "value": counts.get("C", 0), "format": "number"},
+        ]
+        if abc.get("rows"):
+            top = abc["rows"][:15]
+            blueprint["tables"] = [{
+                "title": "Top 15 produtos",
+                "headers": ["#", "Produto", "Classe", "Valor", "% acum"],
+                "rows": [
+                    [i + 1, r["name"], r["class"], r["value"], r["cumulative_pct"]]
+                    for i, r in enumerate(top)
+                ],
+                "value_columns": [3],
+            }]
+
+    elif intent == "stagnant_products":
+        from apps.analytics import kpis_v2 as kv2
+        rows = kv2.stagnant_products(tenant_id, min_stock=1)
+        total_value = sum(r["stuck_value"] for r in rows)
+        blueprint["title"] = "Produtos parados em estoque"
+        blueprint["summary"] = (
+            f"{len(rows)} produtos com estoque mas SEM vendas registradas. "
+            f"Capital travado: {_brl(total_value)}."
+        )
+        blueprint["kpis"] = [
+            {"label": "Produtos parados", "value": len(rows), "format": "number"},
+            {"label": "Valor travado", "value": total_value, "format": "currency"},
+        ]
+        if rows:
+            blueprint["tables"] = [{
+                "title": "Top 15 produtos parados (por valor)",
+                "headers": ["SKU", "Produto", "Estoque", "Custo unit.", "Valor parado"],
+                "rows": [
+                    [r["sku"], r["name"], r["stock"], r["cost"], r["stuck_value"]]
+                    for r in sorted(rows, key=lambda x: -x["stuck_value"])[:15]
+                ],
+                "value_columns": [3, 4],
+            }]
+
+    elif intent == "reorder":
+        from apps.analytics import kpis_v2 as kv2
+        ro = kv2.reorder_suggestions(tenant_id, lookback_days=180)
+        suggestions = ro["suggestions"]
+        total_cost = sum(s["reorder_cost_estimate"] for s in suggestions)
+        blueprint["title"] = "Sugestões de recompra"
+        blueprint["summary"] = (
+            f"{len(suggestions)} produto(s) abaixo de {ro['target_coverage_days']} dias de cobertura. "
+            f"Custo estimado de reposição: {_brl(total_cost)}."
+        ) if suggestions else (
+            "Nenhum produto precisa de reposição urgente — todos com cobertura > 30 dias "
+            "(ou sem vendas suficientes para calcular)."
+        )
+        blueprint["kpis"] = [
+            {"label": "Produtos a repor", "value": len(suggestions), "format": "number"},
+            {"label": "Custo estimado", "value": total_cost, "format": "currency"},
+        ]
+        if suggestions:
+            blueprint["tables"] = [{
+                "title": "Top 15 prioridades",
+                "headers": ["SKU", "Produto", "Estoque", "Cobertura (dias)", "Qtd. sugerida", "Custo"],
+                "rows": [
+                    [s["sku"], s["name"], s["stock"], s["coverage_days"], s["suggested_qty"], s["reorder_cost_estimate"]]
+                    for s in suggestions[:15]
+                ],
+                "value_columns": [5],
+            }]
+
     elif intent == "forecast_revenue":
         from apps.analytics import kpis_v2 as kv2
         fc = kv2.revenue_forecast(tenant_id, days_ahead=days)
@@ -513,6 +671,51 @@ _FOLLOWUP_BY_INTENT = {
         "Quanto perco com inadimplência?",
         "Quais clientes estão em risco?",
         "Como melhorar minha cobrança?",
+    ],
+    "rfv_segments": [
+        "Quem são meus clientes campeões?",
+        "Quais clientes estão em risco de churn?",
+        "Quanto vale meu cliente médio (LTV)?",
+    ],
+    "customers_at_risk": [
+        "Como recuperar clientes inativos?",
+        "Qual o LTV desses clientes em risco?",
+        "Estratégias de reativação",
+    ],
+    "abc_products": [
+        "Quais produtos estão parados?",
+        "Devo recomprar algum produto?",
+        "Margem dos produtos classe A",
+    ],
+    "stagnant_products": [
+        "Quanto tenho de capital travado?",
+        "Como liquidar produtos parados?",
+        "Quais produtos têm maior giro?",
+    ],
+    "reorder": [
+        "Tenho caixa pra fazer essa compra?",
+        "Qual fornecedor é mais barato?",
+        "Qual a margem desses produtos?",
+    ],
+    "forecast_revenue": [
+        "E o caixa, vai ficar negativo?",
+        "Quanto preciso vender pra bater a meta?",
+        "Tendência das despesas",
+    ],
+    "forecast_cash": [
+        "Quanto tenho a receber 30 dias?",
+        "Quanto tenho a pagar 30 dias?",
+        "Como melhorar meu fluxo de caixa?",
+    ],
+    "ltv": [
+        "Quem são meus clientes mais valiosos?",
+        "Qual a taxa de recompra?",
+        "Como aumentar o LTV?",
+    ],
+    "repurchase": [
+        "Quais clientes pararam de comprar?",
+        "Estratégias de retenção",
+        "LTV dos meus clientes",
     ],
 }
 

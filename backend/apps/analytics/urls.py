@@ -2,10 +2,12 @@ from django.urls import path
 
 from .views import (
     CommercialDashboardView,
+    CustomersAnalyticsView,
     ExecutiveDashboardView,
     FinancialDashboardView,
     OverviewView,
     PredictiveDashboardView,
+    ProductsAnalyticsView,
 )
 
 urlpatterns = [
@@ -14,4 +16,7 @@ urlpatterns = [
     path("financial", FinancialDashboardView.as_view(), name="dashboard-financial"),
     path("commercial", CommercialDashboardView.as_view(), name="dashboard-commercial"),
     path("predictive", PredictiveDashboardView.as_view(), name="dashboard-predictive"),
+    # Analíticos (RFV, ABC, parados, reorder)
+    path("analytics/customers", CustomersAnalyticsView.as_view(), name="analytics-customers"),
+    path("analytics/products", ProductsAnalyticsView.as_view(), name="analytics-products"),
 ]
