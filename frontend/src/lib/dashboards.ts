@@ -75,6 +75,57 @@ export interface UpcomingWindow {
   count: number;
 }
 
+// Compartilhados v2 (overview + dashboards premium)
+export interface MonthlyGrowthPoint {
+  month: string;
+  revenue: number;
+  expense: number;
+  profit: number;
+  margin_pct: number;
+  revenue_growth_mom_pct: number | null;
+  profit_growth_mom_pct: number | null;
+  cumulative_revenue: number;
+  cumulative_profit: number;
+}
+
+export interface DreItem {
+  category_id: number | null;
+  category: string;
+  total: number;
+  share_pct: number;
+}
+
+export interface DreStructured {
+  revenues: DreItem[];
+  expenses_fixed: DreItem[];
+  expenses_variable: DreItem[];
+  totals: {
+    revenue: number;
+    expense_fixed: number;
+    expense_variable: number;
+    expense_total: number;
+    contribution_margin: number;
+    net_profit: number;
+    net_margin_pct: number;
+    ebitda: number;
+  };
+}
+
+export interface ExpenseBreakdown {
+  fixed: number;
+  variable: number;
+  total: number;
+}
+
+export type FinancialAlertSeverity = "info" | "warning" | "critical";
+export interface FinancialAlert {
+  kind: string;
+  severity: FinancialAlertSeverity;
+  title: string;
+  message: string;
+  value?: number;
+}
+
 export interface ExecutiveDashboard {
   has_data: boolean;
   period: { start: string; end: string };
@@ -96,6 +147,18 @@ export interface ExecutiveDashboard {
   top_products: TopProduct[];
   top_receivable_categories: TopCategory[];
   top_payable_categories: TopCategory[];
+  // v2 additions
+  ebitda_month: { current: number };
+  ebitda_period: { current: number };
+  net_margin_pct_period: number;
+  roi_operational_pct: number;
+  breakeven: BreakevenInfo;
+  forecast_30d: CashForecastInfo;
+  working_capital: WorkingCapitalInfo;
+  cash_balance: number;
+  burn_rate_monthly: number;
+  health_score: HealthScore;
+  monthly_growth: MonthlyGrowthPoint[];
 }
 
 export interface FinancialDashboard {
@@ -120,6 +183,20 @@ export interface FinancialDashboard {
   top_payable_categories: TopCategory[];
   top_receivable_customers: TopFinancialCustomer[];
   top_payable_suppliers: TopFinancialCustomer[];
+  // v2 additions
+  dre: DreStructured;
+  expense_breakdown: ExpenseBreakdown;
+  contribution_margin_pct: number;
+  breakeven: BreakevenInfo;
+  working_capital: WorkingCapitalInfo;
+  cash_balance: number;
+  burn_rate_monthly: number;
+  ebitda_period: { current: number };
+  ebitda_month: { current: number };
+  roi_operational_pct: number;
+  forecast_30d: CashForecastInfo;
+  monthly_growth: MonthlyGrowthPoint[];
+  alerts: FinancialAlert[];
 }
 
 export interface CommercialDashboard {

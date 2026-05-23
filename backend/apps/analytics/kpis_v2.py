@@ -663,3 +663,279 @@ def stagnant_products(tenant_id: int, *, min_stock: int = 1) -> list[dict[str, A
         }
         for p in qs.exclude(id__in=sold_ids)[:30]
     ]
+
+
+# ===========================================================================
+# DRE estruturado por categoria
+# ===========================================================================
+def dre_structured(tenant_id: int, period: Period) -> dict[str, Any]:
+    """DRE simplificado: receitas, despesas (fixas vs variáveis), lucro.
+
+    Estrutura:
+        revenues:        [{category, total, share_pct}]
+        expenses_fixed:  [{category, total, share_pct}]
+        expenses_var:    [{category, total, share_pct}]
+        totals: receita, despesa_total, lucro_bruto, lucro_liquido, ebitda
+    """
+    revs = list(
+        FinancialEntry.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            direction=FinancialEntry.Direction.RECEIVABLE,
+            status=FinancialEntry.Status.PAID,
+            paid_at__gte=period.start,
+            paid_at__lte=period.end,
+            category__isnull=False,
+        )
+        .values("category_id", "category__name")
+        .annotate(total=Sum("amount"))
+        .order_by("-total")
+    )
+    exps = list(
+        FinancialEntry.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            direction=FinancialEntry.Direction.PAYABLE,
+            status=FinancialEntry.Status.PAID,
+            paid_at__gte=period.start,
+            paid_at__lte=period.end,
+            category__isnull=False,
+        )
+        .values("category_id", "category__name")
+        .annotate(total=Sum("amount"))
+        .order_by("-total")
+    )
+
+    # Receitas sem categoria
+    no_cat_revs = _f(
+        FinancialEntry.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            direction=FinancialEntry.Direction.RECEIVABLE,
+            status=FinancialEntry.Status.PAID,
+            paid_at__gte=period.start,
+            paid_at__lte=period.end,
+            category__isnull=True,
+        ).aggregate(t=Sum("amount"))["t"]
+    )
+    no_cat_exps = _f(
+        FinancialEntry.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            direction=FinancialEntry.Direction.PAYABLE,
+            status=FinancialEntry.Status.PAID,
+            paid_at__gte=period.start,
+            paid_at__lte=period.end,
+            category__isnull=True,
+        ).aggregate(t=Sum("amount"))["t"]
+    )
+
+    total_revenue = sum(_f(r["total"]) for r in revs) + no_cat_revs
+    total_expense = sum(_f(e["total"]) for e in exps) + no_cat_exps
+
+    def _pct(part: float, whole: float) -> float:
+        return (part / whole * 100) if whole > 0 else 0.0
+
+    revenues = [
+        {
+            "category_id": r["category_id"],
+            "category": r["category__name"],
+            "total": _f(r["total"]),
+            "share_pct": _pct(_f(r["total"]), total_revenue),
+        }
+        for r in revs
+    ]
+    if no_cat_revs > 0:
+        revenues.append({
+            "category_id": None,
+            "category": "(Sem categoria)",
+            "total": no_cat_revs,
+            "share_pct": _pct(no_cat_revs, total_revenue),
+        })
+
+    fixed: list[dict] = []
+    variable: list[dict] = []
+    for e in exps:
+        item = {
+            "category_id": e["category_id"],
+            "category": e["category__name"],
+            "total": _f(e["total"]),
+            "share_pct": _pct(_f(e["total"]), total_expense),
+        }
+        if _classify_expense(e["category__name"]) == "fixed":
+            fixed.append(item)
+        else:
+            variable.append(item)
+    if no_cat_exps > 0:
+        variable.append({
+            "category_id": None,
+            "category": "(Sem categoria)",
+            "total": no_cat_exps,
+            "share_pct": _pct(no_cat_exps, total_expense),
+        })
+
+    fixed_total = sum(x["total"] for x in fixed)
+    variable_total = sum(x["total"] for x in variable)
+
+    return {
+        "revenues": revenues[:30],
+        "expenses_fixed": fixed[:30],
+        "expenses_variable": variable[:30],
+        "totals": {
+            "revenue": total_revenue,
+            "expense_fixed": fixed_total,
+            "expense_variable": variable_total,
+            "expense_total": total_expense,
+            "contribution_margin": total_revenue - variable_total,
+            "net_profit": total_revenue - total_expense,
+            "net_margin_pct": _pct(total_revenue - total_expense, total_revenue),
+            "ebitda": ebitda(tenant_id, period),
+        },
+    }
+
+
+# ===========================================================================
+# ROI operacional, séries de crescimento e alertas
+# ===========================================================================
+def roi_operational(tenant_id: int, period: Period) -> float:
+    """ROI sobre custos operacionais. = lucro_liquido / despesas * 100."""
+    co = cash_out_period(tenant_id, period)
+    if co == 0:
+        return 0.0
+    return (net_profit_period(tenant_id, period) / co) * 100
+
+
+def monthly_growth_series(tenant_id: int, period: Period) -> list[dict[str, Any]]:
+    """Série temporal mensal: receita, despesa, lucro + variação MoM e acumulado."""
+    rows = []
+    acc_revenue = 0.0
+    acc_profit = 0.0
+    prev_revenue = None
+    prev_profit = None
+    for start, end in month_buckets(period):
+        p = Period(start=start, end=end)
+        ci = cash_in_period(tenant_id, p)
+        co = cash_out_period(tenant_id, p)
+        net = ci - co
+        acc_revenue += ci
+        acc_profit += net
+        rev_growth = None
+        prof_growth = None
+        if prev_revenue is not None and prev_revenue != 0:
+            rev_growth = (ci - prev_revenue) / abs(prev_revenue) * 100
+        if prev_profit is not None and prev_profit != 0:
+            prof_growth = (net - prev_profit) / abs(prev_profit) * 100
+        rows.append({
+            "month": start.isoformat()[:7],
+            "revenue": ci,
+            "expense": co,
+            "profit": net,
+            "margin_pct": (net / ci * 100) if ci > 0 else 0.0,
+            "revenue_growth_mom_pct": rev_growth,
+            "profit_growth_mom_pct": prof_growth,
+            "cumulative_revenue": acc_revenue,
+            "cumulative_profit": acc_profit,
+        })
+        prev_revenue = ci
+        prev_profit = net
+    return rows
+
+
+def alerts(tenant_id: int) -> list[dict[str, Any]]:
+    """Lista de alertas financeiros para o dashboard Financeiro.
+
+    Cada alerta: {kind, severity, title, message, value?}
+    severity: info | warning | critical
+    """
+    from datetime import timedelta as _td
+
+    out: list[dict] = []
+    today = timezone.now().date()
+    curr = month_period()
+    prev = previous_month_period()
+
+    # 1. Caixa negativo previsto
+    forecast = cash_forecast(tenant_id, days=30)
+    if forecast["at_risk"]:
+        out.append({
+            "kind": "cash_at_risk_30d",
+            "severity": "critical",
+            "title": "Caixa pode ficar negativo em 30 dias",
+            "message": (
+                f"Saldo projetado: R$ {forecast['projected_balance']:,.2f}. "
+                f"Entradas previstas R$ {forecast['expected_in']:,.2f} vs "
+                f"R$ {forecast['expected_out']:,.2f} a pagar."
+            ),
+            "value": forecast["projected_balance"],
+        })
+
+    # 2. Inadimplência alta (> 10%)
+    base_recv = _f(
+        FinancialEntry.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            direction=FinancialEntry.Direction.RECEIVABLE,
+        ).exclude(status=FinancialEntry.Status.CANCELED).aggregate(t=Sum("amount"))["t"]
+    )
+    overdue_val = _f(
+        FinancialEntry.unsafe_objects.filter(
+            tenant_id=tenant_id,
+            direction=FinancialEntry.Direction.RECEIVABLE,
+            status__in=[FinancialEntry.Status.PENDING, FinancialEntry.Status.OVERDUE],
+            due_date__lt=today,
+        ).aggregate(t=Sum("amount"))["t"]
+    )
+    overdue_pct = _safe_div(overdue_val, base_recv) * 100
+    if overdue_pct >= 10:
+        out.append({
+            "kind": "overdue_high",
+            "severity": "critical" if overdue_pct > 20 else "warning",
+            "title": f"Inadimplência em {overdue_pct:.1f}%",
+            "message": (
+                f"R$ {overdue_val:,.2f} em recebíveis vencidos. "
+                "Acima do limite saudável (10%)."
+            ),
+            "value": overdue_pct,
+        })
+
+    # 3. Queda de margem (mês corrente vs anterior)
+    m_curr = net_margin_pct(tenant_id, curr)
+    m_prev = net_margin_pct(tenant_id, prev)
+    if m_prev != 0 and (m_curr - m_prev) < -5:  # caiu mais de 5 pp
+        out.append({
+            "kind": "margin_drop",
+            "severity": "warning",
+            "title": f"Margem caiu {abs(m_curr - m_prev):.1f} pontos",
+            "message": (
+                f"De {m_prev:.1f}% em {prev.start.strftime('%m/%Y')} para "
+                f"{m_curr:.1f}% em {curr.start.strftime('%m/%Y')}."
+            ),
+            "value": m_curr - m_prev,
+        })
+
+    # 4. Crescimento anormal de despesas (> 25% MoM)
+    co_curr = cash_out_period(tenant_id, curr)
+    co_prev = cash_out_period(tenant_id, prev)
+    if co_prev > 0:
+        change = (co_curr - co_prev) / co_prev * 100
+        if change > 25:
+            out.append({
+                "kind": "expense_surge",
+                "severity": "warning" if change < 50 else "critical",
+                "title": f"Despesas subiram {change:.1f}% em {curr.start.strftime('%m/%Y')}",
+                "message": (
+                    f"R$ {co_curr:,.2f} contra R$ {co_prev:,.2f} no mês anterior."
+                ),
+                "value": change,
+            })
+
+    # 5. Capital de giro negativo
+    wc = working_capital(tenant_id)
+    if wc["working_capital"] < 0:
+        out.append({
+            "kind": "negative_wc",
+            "severity": "warning",
+            "title": "Capital de giro negativo",
+            "message": (
+                f"A receber em aberto (R$ {wc['receivables_open']:,.2f}) é menor que "
+                f"a pagar em aberto (R$ {wc['payables_open']:,.2f})."
+            ),
+            "value": wc["working_capital"],
+        })
+
+    return out

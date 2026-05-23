@@ -55,6 +55,12 @@ def _parse_params(request: Request):  # type: ignore[no-untyped-def]
 
 
 class ExecutiveDashboardView(APIView):
+    """
+    GET /api/dashboards/executive
+    Premium: v1 KPIs + score saúde + EBITDA + ponto de equilíbrio +
+    forecast 30d + monthly growth + ROI operacional.
+    """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request) -> Response:
@@ -65,13 +71,35 @@ class ExecutiveDashboardView(APIView):
             period, comparison, filters = _parse_params(request)
         except ValueError as e:
             return _bad_request(str(e))
+
+        # v1 base (compat com UI antiga + novos campos)
         data = kpis.executive_summary(tenant.id, period, comparison, filters)
         data["has_data"] = kpis.has_any_data(tenant.id)
         data["filters_applied"] = not filters.is_empty()
+
+        # v2 additions
+        curr_month = kpis_v2.month_period()
+        data["ebitda_month"] = {"current": kpis_v2.ebitda(tenant.id, curr_month)}
+        data["ebitda_period"] = {"current": kpis_v2.ebitda(tenant.id, period)}
+        data["net_margin_pct_period"] = kpis_v2.net_margin_pct(tenant.id, period)
+        data["roi_operational_pct"] = kpis_v2.roi_operational(tenant.id, period)
+        data["breakeven"] = kpis_v2.above_breakeven(tenant.id, curr_month)
+        data["forecast_30d"] = kpis_v2.cash_forecast(tenant.id, days=30)
+        data["working_capital"] = kpis_v2.working_capital(tenant.id)
+        data["cash_balance"] = kpis_v2.cash_balance(tenant.id)
+        data["burn_rate_monthly"] = kpis_v2.burn_rate(tenant.id, months=3)
+        data["health_score"] = kpis_v2.financial_health_score(tenant.id)
+        data["monthly_growth"] = kpis_v2.monthly_growth_series(tenant.id, period)
         return Response(data)
 
 
 class FinancialDashboardView(APIView):
+    """
+    GET /api/dashboards/financial
+    Premium: v1 + DRE estruturado + fixos vs variáveis + capital de giro +
+    burn rate + alertas + EBITDA + margem de contribuição.
+    """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request) -> Response:
@@ -82,9 +110,26 @@ class FinancialDashboardView(APIView):
             period, comparison, filters = _parse_params(request)
         except ValueError as e:
             return _bad_request(str(e))
+
         data = kpis.financial_summary(tenant.id, period, comparison, filters)
         data["has_data"] = kpis.has_any_data(tenant.id)
         data["filters_applied"] = not filters.is_empty()
+
+        # v2 additions
+        curr_month = kpis_v2.month_period()
+        data["dre"] = kpis_v2.dre_structured(tenant.id, period)
+        data["expense_breakdown"] = kpis_v2.expense_breakdown(tenant.id, period)
+        data["contribution_margin_pct"] = kpis_v2.contribution_margin_pct(tenant.id, period)
+        data["breakeven"] = kpis_v2.above_breakeven(tenant.id, curr_month)
+        data["working_capital"] = kpis_v2.working_capital(tenant.id)
+        data["cash_balance"] = kpis_v2.cash_balance(tenant.id)
+        data["burn_rate_monthly"] = kpis_v2.burn_rate(tenant.id, months=3)
+        data["ebitda_period"] = {"current": kpis_v2.ebitda(tenant.id, period)}
+        data["ebitda_month"] = {"current": kpis_v2.ebitda(tenant.id, curr_month)}
+        data["roi_operational_pct"] = kpis_v2.roi_operational(tenant.id, period)
+        data["forecast_30d"] = kpis_v2.cash_forecast(tenant.id, days=30)
+        data["monthly_growth"] = kpis_v2.monthly_growth_series(tenant.id, period)
+        data["alerts"] = kpis_v2.alerts(tenant.id)
         return Response(data)
 
 
