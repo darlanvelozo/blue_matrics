@@ -215,8 +215,101 @@ def build_kpis_snapshot(tenant_id: int, *, use_cache: bool = True) -> dict[str, 
     last_90 = Period(start=today - timedelta(days=90), end=today)
     last_12m = Period(start=today - timedelta(days=365), end=today)
 
+    # Counts de entidades — para "tenho quantos produtos?" etc.
+    from apps.sync.models import Customer, FinancialEntry, Product, Sale, Salesperson, Category
+    counts = {
+        "customers": Customer.unsafe_objects.filter(tenant_id=tenant_id).count(),
+        "customers_active": Customer.unsafe_objects.filter(tenant_id=tenant_id, is_active=True).count(),
+        "products": Product.unsafe_objects.filter(tenant_id=tenant_id).count(),
+        "products_active": Product.unsafe_objects.filter(tenant_id=tenant_id, is_active=True).count(),
+        "products_in_stock": Product.unsafe_objects.filter(tenant_id=tenant_id, stock_balance__gt=0).count(),
+        "sales_total": Sale.unsafe_objects.filter(tenant_id=tenant_id).count(),
+        "financial_entries": FinancialEntry.unsafe_objects.filter(tenant_id=tenant_id).count(),
+        "categories": Category.unsafe_objects.filter(tenant_id=tenant_id).count(),
+        "salespeople": Salesperson.unsafe_objects.filter(tenant_id=tenant_id).count(),
+    }
+
+    # Stock summary
+    from django.db.models import F, ExpressionWrapper, DecimalField, Sum
+    stock_agg = Product.unsafe_objects.filter(
+        tenant_id=tenant_id, stock_balance__gt=0, cost__gt=0,
+    ).aggregate(
+        total_qty=Sum("stock_balance"),
+        total_value=Sum(
+            ExpressionWrapper(
+                F("stock_balance") * F("cost"),
+                output_field=DecimalField(max_digits=20, decimal_places=2),
+            ),
+        ),
+    )
+
+    # RFV summary (counts only — leve)
+    from apps.analytics import kpis_v2 as kv2
+    try:
+        rfv = kv2.rfv_segments(tenant_id)
+        rfv_counts = rfv.get("counts", {})
+        rfv_total = rfv.get("total", 0)
+    except Exception:
+        rfv_counts = {}
+        rfv_total = 0
+
+    # ABC summary (counts only)
+    try:
+        abc_stock = kv2.abc_curve(tenant_id, by="stock_value")
+        abc_counts = abc_stock.get("counts", {})
+        abc_total_value = abc_stock.get("total", 0)
+    except Exception:
+        abc_counts = {}
+        abc_total_value = 0
+
+    # Stagnant + reorder summary
+    try:
+        stagnant = kv2.stagnant_products(tenant_id, min_stock=1)
+        stagnant_count = len(stagnant)
+        stagnant_value = sum(s["stuck_value"] for s in stagnant)
+    except Exception:
+        stagnant_count = 0
+        stagnant_value = 0
+
+    try:
+        reorder = kv2.reorder_suggestions(tenant_id)
+        reorder_count = reorder.get("total_count", 0)
+    except Exception:
+        reorder_count = 0
+
+    # At risk
+    try:
+        at_risk = kv2.customer_at_risk(tenant_id, inactive_days=60)
+        at_risk_count = len(at_risk)
+        at_risk_value = sum(c["total_purchased"] for c in at_risk)
+    except Exception:
+        at_risk_count = 0
+        at_risk_value = 0
+
     snapshot = {
         "today": today.isoformat(),
+        "entity_counts": counts,
+        "stock_summary": {
+            "total_qty": float(stock_agg.get("total_qty") or 0),
+            "total_value": float(stock_agg.get("total_value") or 0),
+        },
+        "rfv_summary": {
+            "total": rfv_total,
+            "counts": rfv_counts,
+        },
+        "abc_summary": {
+            "total_value": abc_total_value,
+            "classes": abc_counts,
+        },
+        "stagnant_products": {
+            "count": stagnant_count,
+            "stuck_value": stagnant_value,
+        },
+        "reorder_suggestions_count": reorder_count,
+        "at_risk_customers": {
+            "count": at_risk_count,
+            "historical_value": at_risk_value,
+        },
         "last_30d": {
             "cash_in": float(kpi_mod.cash_in(tenant_id, last_30)),
             "cash_out": float(kpi_mod.cash_out(tenant_id, last_30)),

@@ -60,9 +60,26 @@ def _period_last_n_days(days: int) -> Period:
 # Ordem importa: a primeira intent cujo padrão casar vence.
 # Intents mais específicas vêm antes (top_suppliers antes de top_expenses).
 INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
+    # Contagens básicas — "quantos produtos tenho", "quantos clientes"
+    ("entity_count", [
+        r"quantos?\s+(produtos?|clientes?|fornecedor\w*|vendas?|lan[çc]amentos?)",
+        r"qual\s+(o\s+)?(total|n[úu]mero)\s+de\s+(produtos?|clientes?)",
+        r"\btotal\s+de\s+(produtos?|clientes?|vendas?)",
+    ]),
+    # Diferenciar "preciso recomprar produto" (reorder) ANTES de
+    # "taxa de recompra" (repurchase)
+    ("reorder", [
+        r"(recompr\w*|repor|comprar.*estoque).*(produto|estoque|item)",
+        r"(produto|estoque|item).*(recompr\w*|repor|comprar)",
+        r"preciso.*comprar.*(produto|estoque)",
+        r"sugest[ãa]o.*compra",
+        r"\brup?tura\b|ruptura.*estoque",
+        r"\bo que.*comprar\b",
+    ]),
     ("rfv_segments", [
-        r"\brfv\b|champions|fi[ée]is|segment\w*.*cliente|cliente.*segment\w*",
-        r"clientes? (vip|champions|fi[eé]is)",
+        r"\brfv\b|champ[ie]o\w*|fi[ée]is|segment\w*.*cliente|cliente.*segment\w*",
+        r"clientes? (vip|champ[ie]ões?|champions|fi[eé]is)",
+        r"quem.*meus.*melhores.*clientes?",
     ]),
     ("customers_at_risk", [
         r"cliente.*(risco|em risco|inativo|sumi|parou.*comprar)",
@@ -336,6 +353,51 @@ def run_analysis(tenant_id: int, intent: str, *, days: int, limit: int = 10) -> 
                 "format": "currency",
             },
         ]
+
+    elif intent == "entity_count":
+        from apps.sync.models import Customer, FinancialEntry, Product, Sale, Salesperson, Category
+        from django.db.models import F, ExpressionWrapper, DecimalField, Sum
+
+        counts = {
+            "Produtos": Product.unsafe_objects.filter(tenant_id=tenant_id).count(),
+            "Produtos ativos": Product.unsafe_objects.filter(tenant_id=tenant_id, is_active=True).count(),
+            "Produtos com estoque": Product.unsafe_objects.filter(tenant_id=tenant_id, stock_balance__gt=0).count(),
+            "Clientes/Fornecedores": Customer.unsafe_objects.filter(tenant_id=tenant_id).count(),
+            "Vendas formais": Sale.unsafe_objects.filter(tenant_id=tenant_id).count(),
+            "Lançamentos financeiros": FinancialEntry.unsafe_objects.filter(tenant_id=tenant_id).count(),
+            "Categorias": Category.unsafe_objects.filter(tenant_id=tenant_id).count(),
+            "Vendedores": Salesperson.unsafe_objects.filter(tenant_id=tenant_id).count(),
+        }
+        stock_agg = Product.unsafe_objects.filter(
+            tenant_id=tenant_id, stock_balance__gt=0, cost__gt=0,
+        ).aggregate(
+            qty=Sum("stock_balance"),
+            value=Sum(
+                ExpressionWrapper(
+                    F("stock_balance") * F("cost"),
+                    output_field=DecimalField(max_digits=20, decimal_places=2),
+                ),
+            ),
+        )
+        blueprint["title"] = "Resumo da base sincronizada"
+        blueprint["summary"] = (
+            f"Você tem **{counts['Produtos']} produtos** ({counts['Produtos com estoque']} com estoque), "
+            f"**{counts['Clientes/Fornecedores']} pessoas** cadastradas e "
+            f"**{counts['Lançamentos financeiros']:,} lançamentos financeiros** sincronizados."
+        )
+        blueprint["kpis"] = [
+            {"label": label, "value": count, "format": "number"}
+            for label, count in counts.items()
+        ]
+        blueprint["tables"] = [{
+            "title": "Resumo de estoque",
+            "headers": ["Métrica", "Valor"],
+            "rows": [
+                ["Unidades em estoque", float(stock_agg.get("qty") or 0)],
+                ["Valor em estoque (R$)", float(stock_agg.get("value") or 0)],
+            ],
+            "value_columns": [],
+        }]
 
     elif intent == "rfv_segments":
         from apps.analytics import kpis_v2 as kv2
@@ -632,6 +694,11 @@ class LLMQuotaExceeded(Exception):
 # Sugestões de follow-up contextuais (após cada resposta)
 # ---------------------------------------------------------------------------
 _FOLLOWUP_BY_INTENT = {
+    "entity_count": [
+        "Quanto tenho em estoque?",
+        "Quais são meus produtos parados?",
+        "Quem são meus clientes campeões?",
+    ],
     "summary": [
         "Quais foram minhas 10 maiores despesas no último trimestre?",
         "Como está minha inadimplência?",
