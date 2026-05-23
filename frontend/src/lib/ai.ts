@@ -31,14 +31,24 @@ export interface AnalysisBlueprint {
   charts: AnalysisChart[];
 }
 
+export interface AgentToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+}
+
 export interface AskResponse {
   answer: string;
   intent: string;
   blueprint: AnalysisBlueprint;
   used_llm: boolean;
   provider: string;
-  llm_error?: "quota_exceeded" | "rate_limited" | "unknown" | null;
+  llm_error?: "quota_exceeded" | "rate_limited" | "unknown" | "agent_fallback" | null;
   suggestions: string[];
+  agent?: {
+    tools_called: AgentToolCall[];
+    iterations: number;
+  } | null;
 }
 
 export interface AnalyzeResponse {

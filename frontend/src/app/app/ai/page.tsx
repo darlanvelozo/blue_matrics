@@ -173,6 +173,29 @@ export default function AiPage() {
               {messages.map((m, i) => (
                 <Bubble key={i} message={m} />
               ))}
+              {/* Tools usadas pela última resposta — transparência */}
+              {messages.length > 0 && !ask.isPending && lastResp?.agent?.tools_called && lastResp.agent.tools_called.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  <p className="text-[9px] font-medium uppercase tracking-wide text-[color:var(--muted-foreground)]">
+                    Ferramentas consultadas
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {lastResp.agent.tools_called.map((t, i) => (
+                      <span
+                        key={i}
+                        title={`Args: ${JSON.stringify(t.args)}`}
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-mono ${
+                          t.ok
+                            ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700"
+                            : "border-red-500/30 bg-red-500/5 text-red-700"
+                        }`}
+                      >
+                        {t.ok ? "✓" : "✗"} {t.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {/* Sugestões contextuais após resposta */}
               {messages.length > 0 && !ask.isPending && lastResp && (
                 <div className="space-y-1.5 pt-1">

@@ -958,47 +958,65 @@ class AskView(APIView):
 
         intent = classify_intent(question)
         days = detect_window_days(question)
+        # Blueprint determinístico ainda é gerado — alimenta a UI dinâmica
+        # mesmo quando o agente IA não retorna estrutura (resposta livre).
         blueprint = run_analysis(tenant.id, intent, days=days)
         snapshot = llm.build_kpis_snapshot(tenant.id)
-
-        # Mescla snapshot + dados específicos do blueprint (KPIs/tabelas
-        # do intent) — assim a LLM tem TODO o contexto pra responder.
-        # Especialmente importante para forecast, LTV, recompra que dependem
-        # de cálculos não presentes no snapshot genérico.
-        enriched_context = {
-            **snapshot,
-            "intent_detected": intent,
-            "intent_kpis": {k["label"]: k["value"] for k in blueprint.get("kpis", [])},
-            "intent_summary": blueprint.get("summary", ""),
-        }
-        if blueprint.get("tables"):
-            enriched_context["intent_tables"] = [
-                {
-                    "title": t["title"],
-                    "rows_preview": t["rows"][:5],
-                }
-                for t in blueprint["tables"]
-            ]
 
         provider = (getattr(settings, "INSIGHT_LLM_PROVIDER", "disabled") or "disabled").lower()
         answer = ""
         used_llm = False
-        try:
-            if provider == "openai" and settings.OPENAI_API_KEY:
-                answer = _chat_openai(question, enriched_context, history)
+        tools_called: list[dict] = []
+        agent_iterations = 0
+        llm_error = None
+
+        # Modo PRINCIPAL: agente com function calling (OpenAI)
+        if provider == "openai" and settings.OPENAI_API_KEY:
+            try:
+                from .agent import QuotaExceededError, run_agent
+
+                result = run_agent(tenant.id, question, history)
+                answer = result.answer
+                tools_called = result.tools_called
+                agent_iterations = result.iterations
                 used_llm = True
-            elif provider == "anthropic" and settings.ANTHROPIC_API_KEY:
+            except QuotaExceededError:
+                llm_error = "quota_exceeded"
+                logger.warning("Agent: sem créditos OpenAI")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Agent falhou, caindo em chat simples: %s", e)
+                # Fallback: chat simples com contexto enriquecido
+                enriched_context = {
+                    **snapshot,
+                    "intent_detected": intent,
+                    "intent_kpis": {k["label"]: k["value"] for k in blueprint.get("kpis", [])},
+                    "intent_summary": blueprint.get("summary", ""),
+                }
+                try:
+                    answer = _chat_openai(question, enriched_context, history)
+                    used_llm = True
+                    llm_error = "agent_fallback"
+                except LLMQuotaExceeded:
+                    llm_error = "quota_exceeded"
+                except LLMRateLimited:
+                    llm_error = "rate_limited"
+                except Exception as e2:  # noqa: BLE001
+                    logger.warning("Fallback também falhou: %s", e2)
+                    llm_error = "unknown"
+        elif provider == "anthropic" and settings.ANTHROPIC_API_KEY:
+            # Anthropic ainda usa modo legacy (sem function calling)
+            enriched_context = {
+                **snapshot,
+                "intent_detected": intent,
+                "intent_kpis": {k["label"]: k["value"] for k in blueprint.get("kpis", [])},
+                "intent_summary": blueprint.get("summary", ""),
+            }
+            try:
                 answer = _chat_anthropic(question, enriched_context, history)
                 used_llm = True
-        except LLMQuotaExceeded as e:
-            logger.warning("LLM sem créditos: %s", e)
-            llm_error = "quota_exceeded"
-        except LLMRateLimited as e:
-            logger.warning("LLM rate limited: %s", e)
-            llm_error = "rate_limited"
-        except Exception as e:  # noqa: BLE001
-            logger.warning("chat LLM falhou (%s): %s", provider, e)
-            llm_error = "unknown"
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Anthropic falhou: %s", e)
+                llm_error = "unknown"
 
         if not used_llm:
             answer = _demo_answer(question, blueprint)
@@ -1011,9 +1029,13 @@ class AskView(APIView):
             "intent": intent,
             "blueprint": blueprint,
             "used_llm": used_llm,
-            "provider": provider if used_llm else "demo",
-            "llm_error": locals().get("llm_error"),
+            "provider": "openai_agent" if used_llm and provider == "openai" else (provider if used_llm else "demo"),
+            "llm_error": llm_error,
             "suggestions": suggestions,
+            "agent": {
+                "tools_called": tools_called,
+                "iterations": agent_iterations,
+            } if tools_called else None,
         })
 
 
