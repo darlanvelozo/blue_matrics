@@ -691,15 +691,34 @@ class AskView(APIView):
         blueprint = run_analysis(tenant.id, intent, days=days)
         snapshot = llm.build_kpis_snapshot(tenant.id)
 
+        # Mescla snapshot + dados específicos do blueprint (KPIs/tabelas
+        # do intent) — assim a LLM tem TODO o contexto pra responder.
+        # Especialmente importante para forecast, LTV, recompra que dependem
+        # de cálculos não presentes no snapshot genérico.
+        enriched_context = {
+            **snapshot,
+            "intent_detected": intent,
+            "intent_kpis": {k["label"]: k["value"] for k in blueprint.get("kpis", [])},
+            "intent_summary": blueprint.get("summary", ""),
+        }
+        if blueprint.get("tables"):
+            enriched_context["intent_tables"] = [
+                {
+                    "title": t["title"],
+                    "rows_preview": t["rows"][:5],
+                }
+                for t in blueprint["tables"]
+            ]
+
         provider = (getattr(settings, "INSIGHT_LLM_PROVIDER", "disabled") or "disabled").lower()
         answer = ""
         used_llm = False
         try:
             if provider == "openai" and settings.OPENAI_API_KEY:
-                answer = _chat_openai(question, snapshot, history)
+                answer = _chat_openai(question, enriched_context, history)
                 used_llm = True
             elif provider == "anthropic" and settings.ANTHROPIC_API_KEY:
-                answer = _chat_anthropic(question, snapshot, history)
+                answer = _chat_anthropic(question, enriched_context, history)
                 used_llm = True
         except LLMQuotaExceeded as e:
             logger.warning("LLM sem créditos: %s", e)
