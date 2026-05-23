@@ -231,6 +231,13 @@ ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
 ANTHROPIC_MODEL = env("ANTHROPIC_MODEL", default="claude-sonnet-4-6")
 
 # ---------------------------------------------------------------------------
+# Stripe (Billing)
+# ---------------------------------------------------------------------------
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+
+# ---------------------------------------------------------------------------
 # Conta Azul
 # ---------------------------------------------------------------------------
 CONTA_AZUL = {

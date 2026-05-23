@@ -62,6 +62,9 @@ function IntegrationsPageInner() {
     queryKey: ["contaazul", "status"],
     queryFn: getContaAzulStatus,
     refetchOnWindowFocus: true,
+    refetchOnMount: "always", // sempre re-busca ao montar (evita cache stale após OAuth)
+    staleTime: 0,             // dados são sempre considerados velhos
+    gcTime: 5_000,            // remove da cache 5s após desmontar
   });
 
   const connectMutation = useMutation({
