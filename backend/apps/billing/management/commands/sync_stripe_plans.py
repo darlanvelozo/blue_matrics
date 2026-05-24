@@ -123,33 +123,46 @@ class Command(BaseCommand):
         interval_count = plan.billing_interval_count or 1
         nickname = f"BI AZUL — {plan.name}"
 
-        existing = stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=1).data
+        # Stripe enforça unicidade de lookup_key TAMBÉM em prices inativos —
+        # então busca em ambos para liberar a chave quando preciso recriar.
+        existing = (
+            stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=5).data
+            + stripe.Price.list(lookup_keys=[lookup_key], active=False, limit=5).data
+        )
         if existing:
-            price = existing[0]
-            same = (
-                price.unit_amount == unit_amount
-                and price.currency == "brl"
-                and price.recurring
-                and price.recurring.interval == interval
-                and (price.recurring.interval_count or 1) == interval_count
+            # Se há ativos com config compatível, reusa o primeiro.
+            same_active = next(
+                (
+                    p for p in existing
+                    if p.active
+                    and p.unit_amount == unit_amount
+                    and p.currency == "brl"
+                    and p.recurring
+                    and p.recurring.interval == interval
+                    and (p.recurring.interval_count or 1) == interval_count
+                ),
+                None,
             )
-            if same:
+            if same_active:
                 self.stdout.write(
-                    f"  preço[{lookup_key}]: reuso {price.id} "
+                    f"  preço[{lookup_key}]: reuso {same_active.id} "
                     f"({unit_amount/100:.2f} BRL/{interval_count}x{interval})"
                 )
-                return price.id
+                return same_active.id
+            price = existing[0]
             self.stdout.write(self.style.WARNING(
-                f"  preço[{lookup_key}]: divergente — desativa e cria novo"
+                f"  preço[{lookup_key}]: divergente ou inativo — "
+                f"renomeia {len(existing)} antigo(s) e cria novo"
             ))
             if not dry:
-                # Stripe não aceita lookup_key=None; renomeia pra liberar a chave
                 import time as _t
-                stripe.Price.modify(
-                    price.id,
-                    active=False,
-                    lookup_key=f"{lookup_key}_archived_{int(_t.time())}",
-                )
+                ts = int(_t.time())
+                for p in existing:
+                    stripe.Price.modify(
+                        p.id,
+                        active=False,
+                        lookup_key=f"{lookup_key}_archived_{ts}_{p.id[-6:]}",
+                    )
 
         if dry:
             self.stdout.write(self.style.WARNING(
