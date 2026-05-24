@@ -74,3 +74,30 @@ export async function confirmPasswordReset(payload: {
     skipAuth: true,
   });
 }
+
+export async function updateProfile(payload: { full_name: string }): Promise<User> {
+  return apiFetch<User>("/api/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function changePassword(payload: {
+  current_password: string;
+  new_password: string;
+}): Promise<{ detail: string }> {
+  return apiFetch("/api/auth/me/password", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function changeEmail(payload: {
+  new_email: string;
+  current_password: string;
+}): Promise<User> {
+  return apiFetch<User>("/api/auth/me/email", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

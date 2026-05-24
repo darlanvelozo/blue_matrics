@@ -183,6 +183,43 @@ class ReactivateView(APIView):
         return Response(_serialize_subscription(sub))
 
 
+class PortalView(APIView):
+    """
+    Cria uma Billing Portal Session do Stripe.
+    Resp: {url} pra redirecionar. Customer Portal permite ao cliente
+    atualizar cartão, baixar faturas, cancelar/reativar sem suporte.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        tenant = get_request_tenant(request)
+        if tenant is None:
+            return Response(
+                {"error": {"code": "no_tenant", "message": "Tenant não encontrado."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            sub = Subscription.objects.get(tenant=tenant)
+        except Subscription.DoesNotExist:
+            return Response(
+                {"error": {"code": "no_subscription", "message": "Sem assinatura."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        front = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+        try:
+            url = get_billing_service().create_portal_session(
+                subscription=sub,
+                return_url=f"{front.rstrip('/')}/app/billing",
+            )
+        except BillingError as e:
+            return Response(
+                {"error": {"code": "portal_failed", "message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"url": url})
+
+
 class StripeWebhookView(APIView):
     """
     Webhook Stripe. Verifica assinatura, atualiza Subscription/Invoice.

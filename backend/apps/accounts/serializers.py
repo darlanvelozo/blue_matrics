@@ -92,6 +92,38 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
+class ProfileUpdateSerializer(serializers.Serializer):
+    """Atualiza dados do perfil (atualmente só nome completo)."""
+    full_name = serializers.CharField(max_length=200, allow_blank=True)
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """Troca de senha autenticada — requer senha atual."""
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_new_password(self, value: str) -> str:
+        validate_password(value)
+        return value
+
+
+class ChangeEmailSerializer(serializers.Serializer):
+    """Troca de e-mail — requer senha atual para confirmar identidade."""
+    new_email = serializers.EmailField()
+    current_password = serializers.CharField(write_only=True)
+
+    def validate_new_email(self, value: str) -> str:
+        new = value.lower().strip()
+        request = self.context.get("request")
+        current_user = getattr(request, "user", None) if request else None
+        # Não bloqueia se for o mesmo e-mail (no-op aceito)
+        if current_user and new == current_user.email.lower():
+            return new
+        if User.objects.filter(email__iexact=new).exists():
+            raise serializers.ValidationError("Já existe uma conta com este e-mail.")
+        return new
+
+
 class PasswordResetRequestSerializer(serializers.Serializer):
     """Recebe e-mail, retorna sempre 200 (não revela se conta existe)."""
     email = serializers.EmailField()

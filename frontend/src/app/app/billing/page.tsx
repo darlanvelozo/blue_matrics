@@ -10,6 +10,7 @@ import {
   FileText,
   FlaskConical,
   Loader2,
+  Settings as SettingsIcon,
   Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import { ApiError } from "@/lib/api";
 import {
   cancelSubscription,
   getSubscription,
+  openCustomerPortal,
   planCycle,
   reactivateSubscription,
   startCheckout,
@@ -86,6 +88,22 @@ function BillingInner() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["billing", "subscription"] }),
   });
 
+  const portalMutation = useMutation({
+    mutationFn: openCustomerPortal,
+    onSuccess: ({ url }) => {
+      // Mock retorna nossa própria URL com flag — ignoramos
+      if (url.includes("status=mock_portal")) {
+        alert(
+          "Portal Stripe não disponível em modo desenvolvimento. " +
+          "Em produção, este botão abre a página da Stripe onde o cliente " +
+          "atualiza cartão, baixa faturas e gerencia a assinatura."
+        );
+        return;
+      }
+      window.location.href = url;
+    },
+  });
+
   return (
     <div className="space-y-6">
       <header>
@@ -138,8 +156,11 @@ function BillingInner() {
             data={data.subscription}
             onCancel={() => cancelMutation.mutate()}
             onReactivate={() => reactivateMutation.mutate()}
+            onOpenPortal={() => portalMutation.mutate()}
             cancelling={cancelMutation.isPending}
             reactivating={reactivateMutation.isPending}
+            openingPortal={portalMutation.isPending}
+            canOpenPortal={data.provider === "stripe"}
           />
 
           {(cancelMutation.error || reactivateMutation.error) instanceof ApiError && (
@@ -179,14 +200,20 @@ function CurrentPlanCard({
   data,
   onCancel,
   onReactivate,
+  onOpenPortal,
   cancelling,
   reactivating,
+  openingPortal,
+  canOpenPortal,
 }: {
   data: SubscriptionData;
   onCancel: () => void;
   onReactivate: () => void;
+  onOpenPortal: () => void;
   cancelling: boolean;
   reactivating: boolean;
+  openingPortal: boolean;
+  canOpenPortal: boolean;
 }) {
   const status = STATUS_LABEL[data.status];
   const cycle = planCycle(data.plan);
@@ -255,6 +282,20 @@ function CurrentPlanCard({
         </dl>
 
         <div className="flex flex-wrap gap-2">
+          {canOpenPortal && (data.status === "active" || data.status === "past_due") && (
+            <Button
+              variant="outline"
+              onClick={onOpenPortal}
+              disabled={openingPortal}
+            >
+              {openingPortal ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <SettingsIcon className="mr-2 h-4 w-4" />
+              )}
+              Gerenciar pagamento
+            </Button>
+          )}
           {data.cancel_at_period_end ? (
             <Button onClick={onReactivate} disabled={reactivating}>
               {reactivating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -267,6 +308,13 @@ function CurrentPlanCard({
             </Button>
           ) : null}
         </div>
+        {canOpenPortal && (
+          <p className="text-[11px] text-[color:var(--muted-foreground)]">
+            Em <strong>Gerenciar pagamento</strong> você atualiza cartão,
+            baixa faturas anteriores e altera dados de cobrança — tudo na
+            página segura da Stripe.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

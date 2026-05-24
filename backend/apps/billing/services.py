@@ -50,6 +50,10 @@ class BillingService(Protocol):
 
     def reactivate_subscription(self, subscription: Subscription) -> None: ...
 
+    def create_portal_session(
+        self, *, subscription: Subscription, return_url: str,
+    ) -> str: ...
+
 
 # ---------------------------------------------------------------------------
 # Mock — usado em dev/teste sem Stripe configurado
@@ -89,6 +93,13 @@ class MockBillingService:
         subscription.save(
             update_fields=["cancel_at_period_end", "canceled_at", "updated_at"]
         )
+
+    def create_portal_session(
+        self, *, subscription: Subscription, return_url: str,
+    ) -> str:
+        # Em mock, devolve a própria URL de retorno com flag — frontend
+        # apenas mostra "modo dev, portal indisponível".
+        return f"{return_url}?status=mock_portal"
 
     # ------------------------------------------------------------------
     def _complete(self, subscription: Subscription, plan: Plan, session_id: str) -> None:
@@ -197,6 +208,25 @@ class StripeBillingService:
         subscription.save(
             update_fields=["cancel_at_period_end", "canceled_at", "updated_at"]
         )
+
+    def create_portal_session(
+        self, *, subscription: Subscription, return_url: str,
+    ) -> str:
+        """
+        Cria uma Billing Portal Session do Stripe. O cliente é redirecionado
+        para uma página hospedada onde pode atualizar cartão, baixar faturas
+        antigas, cancelar/reativar e visualizar histórico.
+        """
+        if not subscription.stripe_customer_id:
+            raise BillingError(
+                "Customer Stripe não encontrado. "
+                "Inicie um checkout primeiro para criar o customer."
+            )
+        session = self._stripe.billing_portal.Session.create(
+            customer=subscription.stripe_customer_id,
+            return_url=return_url,
+        )
+        return session.url
 
 
 # ---------------------------------------------------------------------------

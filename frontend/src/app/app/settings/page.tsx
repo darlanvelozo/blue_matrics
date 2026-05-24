@@ -1,16 +1,19 @@
 "use client";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
+  AtSign,
   CheckCircle2,
   Download,
   FileText,
+  KeyRound,
   Loader2,
   Settings as SettingsIcon,
   ShieldAlert,
   Trash2,
+  User as UserIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,12 +21,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
-import { logout } from "@/lib/auth";
+import {
+  changeEmail,
+  changePassword,
+  getMe,
+  logout,
+  updateProfile,
+  type User,
+} from "@/lib/auth";
 import { deleteMyAccount, exportMyData, listAuditLogs } from "@/lib/security";
 
 export default function SettingsPage() {
   const router = useRouter();
+  const qc = useQueryClient();
 
+  const me = useQuery({ queryKey: ["me"], queryFn: getMe });
   const audit = useQuery({ queryKey: ["audit-logs"], queryFn: listAuditLogs });
 
   const exportMutation = useMutation({
@@ -33,7 +45,7 @@ export default function SettingsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `bluemetrics-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `biazul-export-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
     },
@@ -58,18 +70,31 @@ export default function SettingsPage() {
           Configurações
         </h1>
         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-          Privacidade, dados pessoais e conformidade com LGPD.
+          Perfil, senha, privacidade e dados pessoais (LGPD).
         </p>
       </header>
+
+      {me.isLoading ? <Skeleton className="h-40" /> : me.data ? (
+        <ProfileCard user={me.data} onUpdated={() => qc.invalidateQueries({ queryKey: ["me"] })} />
+      ) : null}
+
+      <PasswordCard />
+
+      {me.data && (
+        <EmailCard
+          currentEmail={me.data.email}
+          onUpdated={() => qc.invalidateQueries({ queryKey: ["me"] })}
+        />
+      )}
 
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Download className="h-4 w-4" />
-            Exportar meus dados
+            Exportar meus dados (LGPD Art. 18)
           </CardTitle>
           <CardDescription>
-            Baixa um JSON com tudo que armazenamos sobre você e suas empresas (LGPD Art. 18).
+            Baixa um JSON com tudo que armazenamos sobre você e suas empresas.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -80,12 +105,11 @@ export default function SettingsPage() {
             onClick={() => exportMutation.mutate()}
             disabled={exportMutation.isPending}
             variant="outline"
-            className="inline-flex items-center gap-2"
           >
             {exportMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
-              <Download className="h-4 w-4" />
+              <Download className="mr-2 h-4 w-4" />
             )}
             Baixar JSON
           </Button>
@@ -104,7 +128,9 @@ export default function SettingsPage() {
             Logs de auditoria
           </CardTitle>
           <CardDescription>
-            Últimas {audit.data?.entries.length ?? 0} ações registradas na sua conta.
+            {audit.data?.entries.length
+              ? `Últimas ${Math.min(audit.data.entries.length, 30)} ações registradas na sua conta.`
+              : "Ações sensíveis (login, troca de senha, sincronização) aparecem aqui."}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -122,13 +148,13 @@ export default function SettingsPage() {
             <ul className="divide-y divide-[color:var(--border)]">
               {audit.data.entries.slice(0, 30).map((e) => (
                 <li key={e.id} className="flex items-center justify-between px-6 py-3 text-sm">
-                  <div>
-                    <p className="font-medium">{e.action}</p>
-                    <p className="text-xs text-[color:var(--muted-foreground)]">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{prettyAction(e.action)}</p>
+                    <p className="truncate text-xs text-[color:var(--muted-foreground)]">
                       {e.actor_email}{e.ip && ` · ${e.ip}`}
                     </p>
                   </div>
-                  <span className="text-xs text-[color:var(--muted-foreground)]">
+                  <span className="shrink-0 text-xs text-[color:var(--muted-foreground)]">
                     {new Date(e.created_at).toLocaleString("pt-BR", {
                       day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
                     })}
@@ -148,7 +174,7 @@ export default function SettingsPage() {
             Zona de perigo
           </CardTitle>
           <CardDescription>
-            Excluir sua conta é permanente e remove todos os seus dados.
+            Excluir sua conta é permanente e remove todos os seus dados (LGPD Art. 18).
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -212,6 +238,241 @@ export default function SettingsPage() {
   );
 }
 
+// ============================================================
+function ProfileCard({ user, onUpdated }: { user: User; onUpdated: () => void }) {
+  const [fullName, setFullName] = useState(user.full_name);
+  const dirty = fullName !== user.full_name;
+
+  useEffect(() => {
+    setFullName(user.full_name);
+  }, [user.full_name]);
+
+  const mut = useMutation({
+    mutationFn: () => updateProfile({ full_name: fullName }),
+    onSuccess: onUpdated,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <UserIcon className="h-4 w-4" />
+          Perfil
+        </CardTitle>
+        <CardDescription>
+          Como você aparece dentro do BI AZUL.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="profile-name">Nome completo</Label>
+          <Input
+            id="profile-name"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="Seu nome"
+            maxLength={200}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[color:var(--muted-foreground)]">
+            E-mail
+          </Label>
+          <p className="text-sm">
+            {user.email}{" "}
+            <span className="text-xs text-[color:var(--muted-foreground)]">
+              (alterar abaixo)
+            </span>
+          </p>
+        </div>
+        {mut.error instanceof ApiError && (
+          <Banner kind="error">{mut.error.message}</Banner>
+        )}
+        {mut.isSuccess && !dirty && (
+          <Banner kind="success">Perfil atualizado.</Banner>
+        )}
+        <Button onClick={() => mut.mutate()} disabled={!dirty || mut.isPending}>
+          {mut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Salvar alterações
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+function PasswordCard() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [clientErr, setClientErr] = useState<string | null>(null);
+
+  const mut = useMutation({
+    mutationFn: () =>
+      changePassword({ current_password: current, new_password: next }),
+    onSuccess: () => {
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+    },
+  });
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setClientErr(null);
+    if (next.length < 8) {
+      setClientErr("A nova senha precisa ter pelo menos 8 caracteres.");
+      return;
+    }
+    if (next !== confirm) {
+      setClientErr("A confirmação não confere com a nova senha.");
+      return;
+    }
+    mut.mutate();
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <KeyRound className="h-4 w-4" />
+          Trocar senha
+        </CardTitle>
+        <CardDescription>
+          Mínimo 8 caracteres. Você precisará informar a senha atual.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="pwd-current">Senha atual</Label>
+            <Input
+              id="pwd-current"
+              type="password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pwd-new">Nova senha</Label>
+            <Input
+              id="pwd-new"
+              type="password"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+              autoComplete="new-password"
+              required
+              minLength={8}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pwd-confirm">Confirmar nova senha</Label>
+            <Input
+              id="pwd-confirm"
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+              required
+              minLength={8}
+            />
+          </div>
+          {clientErr && <Banner kind="error">{clientErr}</Banner>}
+          {mut.error instanceof ApiError && <Banner kind="error">{mut.error.message}</Banner>}
+          {mut.isSuccess && <Banner kind="success">Senha alterada com sucesso.</Banner>}
+          <Button type="submit" disabled={mut.isPending || !current || !next || !confirm}>
+            {mut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Atualizar senha
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+function EmailCard({
+  currentEmail,
+  onUpdated,
+}: {
+  currentEmail: string;
+  onUpdated: () => void;
+}) {
+  const [newEmail, setNewEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const mut = useMutation({
+    mutationFn: () =>
+      changeEmail({ new_email: newEmail, current_password: password }),
+    onSuccess: () => {
+      setNewEmail("");
+      setPassword("");
+      onUpdated();
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <AtSign className="h-4 w-4" />
+          Alterar e-mail
+        </CardTitle>
+        <CardDescription>
+          E-mail atual: <strong>{currentEmail}</strong>
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            mut.mutate();
+          }}
+          className="space-y-3"
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="email-new">Novo e-mail</Label>
+            <Input
+              id="email-new"
+              type="email"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              placeholder="voce@empresa.com.br"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="email-pwd">Senha atual</Label>
+            <Input
+              id="email-pwd"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          {mut.error instanceof ApiError && (
+            <Banner kind="error">{mut.error.message}</Banner>
+          )}
+          {mut.isSuccess && (
+            <Banner kind="success">
+              E-mail atualizado. Use o novo no próximo login.
+            </Banner>
+          )}
+          <Button type="submit" disabled={mut.isPending || !newEmail || !password}>
+            {mut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Atualizar e-mail
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
 function Banner({
   kind,
   children,
@@ -224,9 +485,31 @@ function Banner({
       ? "border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300"
       : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300";
   return (
-    <div className={`mb-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${cls}`}>
+    <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${cls}`}>
       {kind === "success" ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
       {children}
     </div>
   );
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  login: "Login",
+  logout: "Logout",
+  register: "Cadastro",
+  password_change: "Troca de senha",
+  password_reset_request: "Solicitação de redefinição de senha",
+  password_reset_confirm: "Senha redefinida via e-mail",
+  contaazul_connect: "Conta Azul conectada",
+  contaazul_disconnect: "Conta Azul desconectada",
+  credentials_updated: "Credenciais atualizadas",
+  sync_triggered: "Sincronização disparada",
+  subscription_checkout: "Checkout iniciado",
+  subscription_canceled: "Assinatura cancelada",
+  subscription_reactivated: "Assinatura reativada",
+  data_export: "Exportação de dados",
+  data_delete: "Exclusão de dados",
+  admin_access: "Acesso admin",
+};
+function prettyAction(code: string): string {
+  return ACTION_LABELS[code] ?? code;
 }

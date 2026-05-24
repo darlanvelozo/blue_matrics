@@ -20,9 +20,12 @@ from apps.security.rate_limit import rate_limit
 
 from .models import User
 from .serializers import (
+    ChangeEmailSerializer,
+    ChangePasswordSerializer,
     LoginSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
+    ProfileUpdateSerializer,
     RegisterSerializer,
     UserSerializer,
     tokens_for_user,
@@ -97,6 +100,67 @@ class MeView(APIView):
 
     def get(self, request: Request) -> Response:
         return Response(UserSerializer(request.user).data)
+
+    def patch(self, request: Request) -> Response:
+        """Atualiza perfil (apenas nome — e-mail/senha têm endpoints próprios)."""
+        serializer = ProfileUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        user: User = request.user  # type: ignore[assignment]
+        if "full_name" in serializer.validated_data:
+            user.full_name = serializer.validated_data["full_name"]
+            user.save(update_fields=["full_name"])
+        return Response(UserSerializer(user).data)
+
+
+class ChangePasswordView(APIView):
+    """Troca de senha do usuário autenticado. Requer senha atual."""
+
+    permission_classes = [IsAuthenticated]
+
+    @rate_limit(key_prefix="auth-pwd-change", limit=5, window_seconds=300)
+    def post(self, request: Request) -> Response:
+        serializer = ChangePasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user: User = request.user  # type: ignore[assignment]
+        if not user.check_password(serializer.validated_data["current_password"]):
+            return Response(
+                {"error": {"code": "wrong_password", "message": "Senha atual incorreta."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        log_action(action=AuditAction.PASSWORD_CHANGE, actor=user, request=request)
+        return Response({"detail": "Senha alterada com sucesso."})
+
+
+class ChangeEmailView(APIView):
+    """Troca de e-mail. Requer senha atual."""
+
+    permission_classes = [IsAuthenticated]
+
+    @rate_limit(key_prefix="auth-email-change", limit=5, window_seconds=900)
+    def post(self, request: Request) -> Response:
+        serializer = ChangeEmailSerializer(
+            data=request.data, context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        user: User = request.user  # type: ignore[assignment]
+        if not user.check_password(serializer.validated_data["current_password"]):
+            return Response(
+                {"error": {"code": "wrong_password", "message": "Senha atual incorreta."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        new_email = serializer.validated_data["new_email"]
+        old_email = user.email
+        if new_email == old_email.lower():
+            return Response(UserSerializer(user).data)
+        user.email = new_email
+        user.save(update_fields=["email"])
+        logger.info(
+            "email alterado: user=%s old=%s new=%s",
+            user.public_id, old_email, new_email,
+        )
+        return Response(UserSerializer(user).data)
 
 
 class PasswordResetRequestView(APIView):

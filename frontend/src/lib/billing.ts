@@ -96,3 +96,7 @@ export function cancelSubscription(): Promise<SubscriptionData> {
 export function reactivateSubscription(): Promise<SubscriptionData> {
   return apiFetch("/api/billing/reactivate", { method: "POST" });
 }
+
+export function openCustomerPortal(): Promise<{ url: string }> {
+  return apiFetch("/api/billing/portal", { method: "POST" });
+}
