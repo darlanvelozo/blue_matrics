@@ -14,10 +14,11 @@ class TestListPlans:
         resp = api_client.get(self.URL)
         assert resp.status_code == 200
         plans = resp.json()["plans"]
-        # Apenas Mensal e Anual estão ativos; legacy ficam is_active=False
-        assert len(plans) == 2
+        # Mensal + Semestral + Anual estão ativos; legacy ficam is_active=False
+        assert len(plans) == 3
         codes = [p["code"] for p in plans]
         assert "monthly" in codes
+        assert "semestral" in codes
         assert "annual" in codes
 
 

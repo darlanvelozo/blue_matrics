@@ -22,6 +22,7 @@ def _serialize_plan(p: Plan) -> dict:
         "price_monthly": float(p.price_monthly),
         "billing_amount": float(p.billing_amount),
         "billing_interval": p.billing_interval,
+        "billing_interval_count": p.billing_interval_count,
         "currency": p.currency,
         "max_users": p.max_users,
         "features": p.features,

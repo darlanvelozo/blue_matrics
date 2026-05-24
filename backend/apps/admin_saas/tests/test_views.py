@@ -49,9 +49,9 @@ class TestSummaryView:
         resp = superuser_client.get(self.URL)
         assert resp.status_code == 200
         d = resp.json()
-        # MRR usa price_monthly do plano ativo (monthly = 499)
-        assert d["mrr"] == 499.0
-        assert d["arr"] == 499.0 * 12
+        # MRR usa price_monthly do plano ativo (monthly = 299.90)
+        assert d["mrr"] == 299.9
+        assert round(d["arr"], 2) == round(299.9 * 12, 2)
         assert d["active_subscribers"] == 1
         assert d["trialing"] == 1
         assert "mrr_by_plan" in d

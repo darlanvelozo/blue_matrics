@@ -93,11 +93,11 @@ class MockBillingService:
     # ------------------------------------------------------------------
     def _complete(self, subscription: Subscription, plan: Plan, session_id: str) -> None:
         now = timezone.now()
-        period_delta = (
-            relativedelta(years=1)
-            if plan.billing_interval == Plan.BillingInterval.YEAR
-            else relativedelta(months=1)
-        )
+        count = max(1, plan.billing_interval_count or 1)
+        if plan.billing_interval == Plan.BillingInterval.YEAR:
+            period_delta = relativedelta(years=count)
+        else:
+            period_delta = relativedelta(months=count)
         period_end = now + period_delta
         subscription.plan = plan
         subscription.status = Subscription.Status.ACTIVE

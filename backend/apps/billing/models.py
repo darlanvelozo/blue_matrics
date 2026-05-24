@@ -26,25 +26,28 @@ class Plan(models.Model):
         BUSINESS = "business", "Business (legacy)"
         # Atuais
         MONTHLY = "monthly", "Mensal"
+        SEMESTRAL = "semestral", "Semestral"
         ANNUAL = "annual", "Anual"
 
     class BillingInterval(models.TextChoices):
-        MONTH = "month", "Mensal"
-        YEAR = "year", "Anual"
+        # Mapeia direto para Stripe (interval, interval_count):
+        #   month + 1 → mensal | month + 6 → semestral | year + 1 → anual
+        MONTH = "month", "Mês"
+        YEAR = "year", "Ano"
 
     code = models.CharField(max_length=32, choices=Code.choices, unique=True)
     name = models.CharField(max_length=80)
     description = models.CharField(max_length=200, blank=True, default="")
     price_monthly = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0"))
-    # Valor cobrado por ciclo de fatura (mensal ou anual). Para plano mensal,
-    # billing_amount == price_monthly. Para anual, é o preço único cobrado
-    # 1x por ano (geralmente 10× price_monthly = 2 meses de desconto).
+    # Valor cobrado por ciclo de fatura.
     billing_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0"))
     billing_interval = models.CharField(
         max_length=10,
         choices=BillingInterval.choices,
         default=BillingInterval.MONTH,
     )
+    # Quantos `billing_interval` cabem em 1 ciclo. Ex: 6 com interval=month → semestral.
+    billing_interval_count = models.PositiveIntegerField(default=1)
     currency = models.CharField(max_length=3, default="BRL")
     max_users = models.IntegerField(default=1)
     features = models.JSONField(default=list)

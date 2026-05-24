@@ -1,11 +1,15 @@
 """
-Sincroniza o catálogo de planos com Stripe.
+Sincroniza o catálogo de planos (modelo `Plan`) com o Stripe.
 
-Cria (ou reutiliza pelo lookup_key) os Prices Mensal e Anual em BRL, grava
-`stripe_price_id` em cada Plan e arquiva produtos legados (Starter/Growth/Business)
-no Stripe.
+- Cria UM produto "BI AZUL" (reutiliza pelo nome).
+- Para cada Plan ativo cria/reusa um Price via lookup_key (`biazul_<code>_brl`).
+  Preço/intervalo divergente → desativa o antigo e cria um novo.
+- Grava `stripe_price_id` no Plan local.
+- Arquiva produtos legados (Starter/Growth/Business) que sobraram no Stripe.
 
-Idempotente: pode rodar quantas vezes quiser. Sempre usa lookup_key estável.
+Idempotente: pode rodar quantas vezes quiser.
+Suporta intervalos compostos: usa `interval_count` direto do model
+(ex: month + count=6 → plano semestral).
 
 Uso:
     python manage.py sync_stripe_plans            # cria/sincroniza
@@ -27,14 +31,17 @@ PRODUCT_NAME = "BI AZUL"
 PRODUCT_DESCRIPTION = (
     "Copiloto financeiro com IA para PMEs brasileiras integrado à Conta Azul."
 )
-LOOKUP_MONTHLY = "biazul_monthly_brl"
-LOOKUP_ANNUAL = "biazul_annual_brl"
 
+# lookup_keys legados que devem ser desativados em qualquer sync
 LEGACY_LOOKUPS = ["biazul_starter", "biazul_growth", "biazul_business"]
 
 
+def _lookup_key(code: str) -> str:
+    return f"biazul_{code}_brl"
+
+
 class Command(BaseCommand):
-    help = "Sincroniza planos do catálogo com Stripe (cria produto/prices, arquiva legados)."
+    help = "Sincroniza planos do catálogo (Plan) com Stripe."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -54,52 +61,39 @@ class Command(BaseCommand):
             raise CommandError("stripe SDK não instalado. Rode: pip install stripe") from e
         stripe.api_key = key
 
-        self.stdout.write(self.style.NOTICE(f"Stripe mode: {key[:8]}…  dry_run={dry}"))
+        mode = "LIVE" if key.startswith("sk_live") else "TEST"
+        self.stdout.write(self.style.NOTICE(
+            f"Stripe mode: {key[:10]}… ({mode})  dry_run={dry}"
+        ))
 
-        # ------------------------------------------------------------------
-        # 1) Produto único (procura por nome; cria se não existir)
-        # ------------------------------------------------------------------
+        # 1) Produto único
         product = self._find_or_create_product(stripe, dry=dry)
 
-        # ------------------------------------------------------------------
-        # 2) Prices Mensal + Anual via lookup_key
-        # ------------------------------------------------------------------
-        monthly_price = self._upsert_price(
-            stripe,
-            product_id=product.id if product else "(pending)",
-            lookup_key=LOOKUP_MONTHLY,
-            nickname="BI AZUL — Mensal",
-            unit_amount=49900,  # R$ 499 em centavos
-            interval="month",
-            dry=dry,
-        )
-        annual_price = self._upsert_price(
-            stripe,
-            product_id=product.id if product else "(pending)",
-            lookup_key=LOOKUP_ANNUAL,
-            nickname="BI AZUL — Anual",
-            unit_amount=449900,  # R$ 4.499 em centavos
-            interval="year",
-            dry=dry,
-        )
-
-        # ------------------------------------------------------------------
-        # 3) Atualiza Plan.stripe_price_id no DB
-        # ------------------------------------------------------------------
-        if not dry:
-            Plan.objects.filter(code="monthly").update(stripe_price_id=monthly_price.id)
-            Plan.objects.filter(code="annual").update(stripe_price_id=annual_price.id)
-            self.stdout.write(self.style.SUCCESS(
-                f"  → Plan.monthly.stripe_price_id = {monthly_price.id}"
+        # 2) Para cada Plan ativo, garante o Price no Stripe e grava o id
+        active_plans = list(Plan.objects.filter(is_active=True).order_by("sort_order"))
+        if not active_plans:
+            self.stdout.write(self.style.WARNING(
+                "Nenhum Plan ativo encontrado. Rode as data migrations antes."
             ))
-            self.stdout.write(self.style.SUCCESS(
-                f"  → Plan.annual.stripe_price_id  = {annual_price.id}"
-            ))
+            return
 
-        # ------------------------------------------------------------------
-        # 4) Arquiva produtos legados no Stripe
-        # ------------------------------------------------------------------
-        self._archive_legacy_products(stripe, keep_product_id=product.id if product else None, dry=dry)
+        for plan in active_plans:
+            price_id = self._upsert_price_for_plan(
+                stripe,
+                plan=plan,
+                product_id=product.id if product else "(pending)",
+                dry=dry,
+            )
+            if not dry and price_id:
+                Plan.objects.filter(pk=plan.pk).update(stripe_price_id=price_id)
+                self.stdout.write(self.style.SUCCESS(
+                    f"  → Plan.{plan.code}.stripe_price_id = {price_id}"
+                ))
+
+        # 3) Arquiva produtos legados
+        self._archive_legacy_products(
+            stripe, keep_product_id=product.id if product else None, dry=dry,
+        )
 
         self.stdout.write(self.style.SUCCESS("Pronto."))
 
@@ -119,50 +113,60 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f"  produto criado: {prod.id}"))
         return prod
 
-    def _upsert_price(
-        self, stripe, *,
-        product_id: str, lookup_key: str, nickname: str,
-        unit_amount: int, interval: str, dry: bool,
-    ):
+    def _upsert_price_for_plan(
+        self, stripe, *, plan: Plan, product_id: str, dry: bool,
+    ) -> str | None:
+        lookup_key = _lookup_key(plan.code)
+        # Stripe trabalha em centavos
+        unit_amount = int(round(float(plan.billing_amount) * 100))
+        interval = plan.billing_interval
+        interval_count = plan.billing_interval_count or 1
+        nickname = f"BI AZUL — {plan.name}"
+
         existing = stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=1).data
         if existing:
             price = existing[0]
-            ok = (
+            same = (
                 price.unit_amount == unit_amount
                 and price.currency == "brl"
-                and price.recurring and price.recurring.interval == interval
+                and price.recurring
+                and price.recurring.interval == interval
+                and (price.recurring.interval_count or 1) == interval_count
             )
-            if ok:
-                self.stdout.write(f"  preço[{lookup_key}]: reuso {price.id} ({price.unit_amount/100:.2f} BRL/{interval})")
-                return price
+            if same:
+                self.stdout.write(
+                    f"  preço[{lookup_key}]: reuso {price.id} "
+                    f"({unit_amount/100:.2f} BRL/{interval_count}x{interval})"
+                )
+                return price.id
             self.stdout.write(self.style.WARNING(
-                f"  preço[{lookup_key}]: divergente — vou desativar e criar novo"
+                f"  preço[{lookup_key}]: divergente — desativa e cria novo"
             ))
             if not dry:
-                # Stripe não permite editar amount/interval; precisa criar novo
                 stripe.Price.modify(price.id, active=False, lookup_key=None)
 
         if dry:
             self.stdout.write(self.style.WARNING(
-                f"  [dry] criaria price {lookup_key}: {unit_amount/100:.2f} BRL/{interval}"
+                f"  [dry] criaria price {lookup_key}: "
+                f"{unit_amount/100:.2f} BRL/{interval_count}x{interval}"
             ))
-            return type("P", (), {"id": f"(dry-{lookup_key})"})()  # placeholder
+            return None
 
         price = stripe.Price.create(
             product=product_id,
             unit_amount=unit_amount,
             currency="brl",
-            recurring={"interval": interval},
+            recurring={"interval": interval, "interval_count": interval_count},
             lookup_key=lookup_key,
             nickname=nickname,
         )
         self.stdout.write(self.style.SUCCESS(
-            f"  preço criado: {price.id} [{lookup_key}] {unit_amount/100:.2f} BRL/{interval}"
+            f"  preço criado: {price.id} [{lookup_key}] "
+            f"{unit_amount/100:.2f} BRL/{interval_count}x{interval}"
         ))
-        return price
+        return price.id
 
     def _archive_legacy_products(self, stripe, *, keep_product_id: str | None, dry: bool):
-        # Procura Prices com lookup_keys legados → desativa + arquiva produto vinculado
         legacy = stripe.Price.list(lookup_keys=LEGACY_LOOKUPS, active=True, limit=10).data
         if not legacy:
             self.stdout.write("  legados: nenhum Price ativo com lookup_keys antigos")
@@ -182,7 +186,6 @@ class Command(BaseCommand):
                             f"    ! não foi possível arquivar {price.product}: {e}"
                         ))
 
-        # Também procura por nome qualquer produto antigo que tenha sobrado
         for name in ("Starter", "Growth", "Business"):
             for p in stripe.Product.search(query=f'name:"{name}" AND active:"true"', limit=5).data:
                 if p.id == keep_product_id:

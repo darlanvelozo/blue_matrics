@@ -257,38 +257,53 @@ function Pricing() {
   const plans = [
     {
       name: "Mensal",
-      price: "R$ 499",
+      price: "R$ 299,90",
       cycle: "/mês",
+      equiv: null,
+      badge: null,
       desc: "Comece já e pague mês a mês. Cancele quando quiser.",
       features: shared,
+      highlight: false,
+    },
+    {
+      name: "Semestral",
+      price: "R$ 1.649,45",
+      cycle: "/semestre",
+      equiv: "R$ 274,91/mês",
+      badge: "8% OFF",
+      desc: "Pague a cada 6 meses e economize 8%.",
+      features: [...shared, "Economia de ~8% vs. Mensal", "Pagamento único semestral"],
+      highlight: false,
     },
     {
       name: "Anual",
-      price: "R$ 4.499",
+      price: "R$ 2.999,00",
       cycle: "/ano",
-      desc: "Economize ~25% pagando uma vez ao ano (equivale a R$ 374,92/mês).",
-      features: [...shared, "Economia de R$ 1.489/ano", "Pagamento único anual"],
+      equiv: "R$ 249,92/mês",
+      badge: "17% OFF",
+      desc: "Maior economia. Pague 1x por ano e relaxe.",
+      features: [...shared, "Economia de ~17% vs. Mensal", "Pagamento único anual"],
       highlight: true,
     },
   ];
   return (
     <section id="planos" className="border-b border-[color:var(--border)] py-20">
-      <div className="mx-auto max-w-5xl px-4">
+      <div className="mx-auto max-w-6xl px-4">
         <SectionHeader
           eyebrow="Planos"
-          title="Um plano. Dois ciclos. Trial grátis de 7 dias."
+          title="Um plano. Três ciclos. Trial grátis de 7 dias."
         />
         <p className="mx-auto mt-3 max-w-2xl text-center text-sm text-[color:var(--muted-foreground)]">
           Sem limites, sem letrinhas miúdas — acesso completo em qualquer ciclo.
         </p>
-        <div className="mt-12 grid gap-6 md:grid-cols-2">
+        <div className="mt-12 grid gap-6 md:grid-cols-3">
           {plans.map((p) => (
             <Card
               key={p.name}
               className={
                 p.highlight
                   ? "relative border-blue-500/40 shadow-lg ring-1 ring-blue-500/20"
-                  : ""
+                  : "relative"
               }
             >
               {p.highlight && (
@@ -297,12 +312,24 @@ function Pricing() {
                 </span>
               )}
               <CardContent className="p-6">
-                <h3 className="text-lg font-semibold">{p.name}</h3>
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="text-lg font-semibold">{p.name}</h3>
+                  {p.badge && (
+                    <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                      {p.badge}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">{p.desc}</p>
                 <div className="mt-6 flex items-baseline gap-1">
-                  <span className="text-4xl font-bold tracking-tight">{p.price}</span>
+                  <span className="text-3xl font-bold tracking-tight">{p.price}</span>
                   <span className="text-sm text-[color:var(--muted-foreground)]">{p.cycle}</span>
                 </div>
+                {p.equiv && (
+                  <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">
+                    equivale a <strong className="text-[color:var(--foreground)]">{p.equiv}</strong>
+                  </p>
+                )}
                 <ul className="mt-6 space-y-2 text-sm">
                   {p.features.map((f) => (
                     <li key={f} className="flex items-start gap-2">

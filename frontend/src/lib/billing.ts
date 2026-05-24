@@ -2,6 +2,7 @@ import { apiFetch } from "./api";
 
 export type PlanCode =
   | "monthly"
+  | "semestral"
   | "annual"
   // Legacy (mantidos pra retro-compatibilidade com subs antigas)
   | "starter"
@@ -9,6 +10,8 @@ export type PlanCode =
   | "business";
 
 export type BillingInterval = "month" | "year";
+/** Identifica o ciclo de forma user-friendly (independente de Stripe). */
+export type BillingCycle = "month" | "semester" | "year";
 
 export type SubscriptionStatus =
   | "trialing"
@@ -26,10 +29,20 @@ export interface Plan {
   price_monthly: number;
   billing_amount: number;
   billing_interval: BillingInterval;
+  billing_interval_count: number;
   currency: string;
   max_users: number;
   features: string[];
   sort_order: number;
+}
+
+/** Deriva o ciclo lógico a partir de interval+count. */
+export function planCycle(plan: Plan): BillingCycle {
+  if (plan.billing_interval === "year") return "year";
+  if (plan.billing_interval === "month" && plan.billing_interval_count === 6) {
+    return "semester";
+  }
+  return "month";
 }
 
 export interface SubscriptionData {
