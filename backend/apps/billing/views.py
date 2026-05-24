@@ -156,7 +156,13 @@ class CancelView(APIView):
                 {"error": {"code": "no_subscription", "message": "Sem assinatura."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        get_billing_service().cancel_subscription(sub)
+        try:
+            get_billing_service().cancel_subscription(sub)
+        except BillingError as e:
+            return Response(
+                {"error": {"code": "cancel_failed", "message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         sub.refresh_from_db()
         return Response(_serialize_subscription(sub))
 
@@ -178,7 +184,13 @@ class ReactivateView(APIView):
                 {"error": {"code": "no_subscription", "message": "Sem assinatura."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        get_billing_service().reactivate_subscription(sub)
+        try:
+            get_billing_service().reactivate_subscription(sub)
+        except BillingError as e:
+            return Response(
+                {"error": {"code": "reactivate_failed", "message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         sub.refresh_from_db()
         return Response(_serialize_subscription(sub))
 
