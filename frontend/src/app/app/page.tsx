@@ -17,9 +17,9 @@ import {
   Wand2,
 } from "lucide-react";
 import { CashflowChart } from "@/components/dashboards/charts";
-import { EmptyDashboardState } from "@/components/dashboards/empty-state";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { RankingList } from "@/components/dashboards/ranking-list";
+import { WelcomeWizard } from "@/components/onboarding/welcome-wizard";
 import { ScoreGauge } from "@/components/overview/score-gauge";
 import { SmartCardItem } from "@/components/overview/smart-card";
 import { Card, CardContent } from "@/components/ui/card";
@@ -81,7 +81,17 @@ export default function HomePage() {
       {overview.isLoading ? (
         <SkeletonSection />
       ) : !data?.has_data ? (
-        <EmptyDashboardState />
+        <WelcomeWizard
+          contaAzulConnected={Boolean(ca.data?.has_credentials)}
+          syncCount={sync.data?.logs?.length ?? 0}
+          syncSuccess={
+            sync.data?.logs?.some((l) => l.status === "success") ?? false
+          }
+          hasAskedAi={
+            typeof window !== "undefined" &&
+            window.localStorage.getItem("biazul_has_asked_ai") === "1"
+          }
+        />
       ) : (
         <>
           {/* Cards inteligentes */}

@@ -411,14 +411,76 @@ function FinalCta() {
 
 function SiteFooter() {
   return (
-    <footer className="py-10">
-      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 text-sm text-[color:var(--muted-foreground)] md:flex-row">
-        <div className="flex items-center gap-4">
-          <Logo />
+    <footer className="border-t border-[color:var(--border)] py-12">
+      <div className="mx-auto max-w-6xl px-4">
+        <div className="grid gap-8 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
+          <div>
+            <Logo />
+            <p className="mt-3 max-w-xs text-xs text-[color:var(--muted-foreground)]">
+              Copiloto financeiro com IA para PMEs brasileiras integrado à Conta Azul.
+            </p>
+          </div>
+          <FooterCol
+            title="Produto"
+            links={[
+              { href: "/#features", label: "Funcionalidades" },
+              { href: "/#planos", label: "Planos" },
+              { href: "/#faq", label: "FAQ" },
+              { href: "/help", label: "Central de ajuda" },
+            ]}
+          />
+          <FooterCol
+            title="Empresa"
+            links={[
+              { href: "mailto:contato@biazul.com", label: "Contato" },
+              { href: "mailto:suporte@biazul.com", label: "Suporte" },
+              { href: "/register", label: "Comece grátis" },
+            ]}
+          />
+          <FooterCol
+            title="Legal"
+            links={[
+              { href: "/legal/termos", label: "Termos de Uso" },
+              { href: "/legal/privacidade", label: "Privacidade (LGPD)" },
+              { href: "/legal/cancelamento", label: "Cancelamento & Reembolso" },
+              { href: "/legal/cookies", label: "Cookies" },
+            ]}
+          />
         </div>
-        <p>© {new Date().getFullYear()} BI AZUL. Todos os direitos reservados.</p>
+        <div className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-[color:var(--border)] pt-6 text-xs text-[color:var(--muted-foreground)] sm:flex-row sm:items-center">
+          <p>© {new Date().getFullYear()} BI AZUL. Todos os direitos reservados.</p>
+          <p>Pagamentos processados pela Stripe. Dados em conformidade com a LGPD.</p>
+        </div>
       </div>
     </footer>
+  );
+}
+
+function FooterCol({
+  title,
+  links,
+}: {
+  title: string;
+  links: { href: string; label: string }[];
+}) {
+  return (
+    <div>
+      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[color:var(--foreground)]">
+        {title}
+      </h4>
+      <ul className="space-y-2 text-sm text-[color:var(--muted-foreground)]">
+        {links.map((l) => (
+          <li key={l.href + l.label}>
+            <Link
+              href={l.href}
+              className="hover:text-[color:var(--foreground)] transition-colors"
+            >
+              {l.label}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

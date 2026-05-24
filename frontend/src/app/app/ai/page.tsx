@@ -41,6 +41,11 @@ export default function AiPage() {
       setBlueprint(resp.blueprint);
       setLastResp(resp);
       setDraft("");
+      try {
+        window.localStorage.setItem("biazul_has_asked_ai", "1");
+      } catch {
+        /* localStorage indisponível — ignora */
+      }
     },
   });
 
