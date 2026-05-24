@@ -143,7 +143,13 @@ class Command(BaseCommand):
                 f"  preço[{lookup_key}]: divergente — desativa e cria novo"
             ))
             if not dry:
-                stripe.Price.modify(price.id, active=False, lookup_key=None)
+                # Stripe não aceita lookup_key=None; renomeia pra liberar a chave
+                import time as _t
+                stripe.Price.modify(
+                    price.id,
+                    active=False,
+                    lookup_key=f"{lookup_key}_archived_{int(_t.time())}",
+                )
 
         if dry:
             self.stdout.write(self.style.WARNING(
@@ -175,7 +181,12 @@ class Command(BaseCommand):
                 f"  legado: desativando price {price.id} ({price.lookup_key})"
             ))
             if not dry:
-                stripe.Price.modify(price.id, active=False, lookup_key=None)
+                import time as _t
+                stripe.Price.modify(
+                    price.id,
+                    active=False,
+                    lookup_key=f"{price.lookup_key}_archived_{int(_t.time())}",
+                )
             if price.product and price.product != keep_product_id:
                 if not dry:
                     try:
