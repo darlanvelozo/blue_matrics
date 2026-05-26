@@ -38,6 +38,8 @@ export interface AgentToolCall {
 }
 
 export interface AskResponse {
+  session_id: number;
+  session_title: string;
   answer: string;
   intent: string;
   blueprint: AnalysisBlueprint;
@@ -67,7 +69,7 @@ export interface ChatMessage {
 
 export function askAi(payload: {
   question: string;
-  history?: ChatMessage[];
+  session_id?: number;
 }): Promise<AskResponse> {
   return apiFetch("/api/insights/ask", {
     method: "POST",
@@ -82,4 +84,59 @@ export function analyzeAi(payload: { question: string }): Promise<AnalyzeRespons
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+// ----------------------------------------------------------------------------
+// Histórico de conversas (chat sessions)
+// ----------------------------------------------------------------------------
+export interface ChatSessionSummary {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ChatSessionMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  blueprint: AnalysisBlueprint | null;
+  tools_called: AgentToolCall[] | null;
+  used_llm: boolean;
+  llm_provider: string;
+  llm_error: string | null;
+  created_at: string;
+}
+
+export interface ChatSessionDetail extends ChatSessionSummary {
+  messages: ChatSessionMessage[];
+}
+
+export function listChatSessions(): Promise<{ sessions: ChatSessionSummary[] }> {
+  return apiFetch("/api/insights/chats");
+}
+
+export function getChatSession(id: number): Promise<ChatSessionDetail> {
+  return apiFetch(`/api/insights/chats/${id}`);
+}
+
+export function createChatSession(title?: string): Promise<ChatSessionSummary> {
+  return apiFetch("/api/insights/chats", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(title ? { title } : {}),
+  });
+}
+
+export function renameChatSession(id: number, title: string): Promise<ChatSessionSummary> {
+  return apiFetch(`/api/insights/chats/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
+export function deleteChatSession(id: number): Promise<void> {
+  return apiFetch(`/api/insights/chats/${id}`, { method: "DELETE" });
 }

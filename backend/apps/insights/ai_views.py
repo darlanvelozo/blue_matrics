@@ -956,9 +956,32 @@ class AskView(APIView):
                 {"error": {"code": "invalid", "message": "question é obrigatório."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        history = request.data.get("history") or []
-        if not isinstance(history, list):
-            history = []
+
+        # session_id: se informado, recupera a sessão. Senão cria uma nova.
+        session_id = request.data.get("session_id")
+        from .models import ChatMessage, ChatSession
+        session = None
+        if session_id:
+            try:
+                session = ChatSession.objects.get(
+                    pk=int(session_id), tenant=tenant, user=request.user,
+                )
+            except (ChatSession.DoesNotExist, ValueError, TypeError):
+                pass
+        if session is None:
+            # Cria nova sessão com título derivado da pergunta
+            session = ChatSession.objects.create(
+                tenant=tenant,
+                user=request.user,
+                title=_session_title_from_question(question),
+            )
+
+        # history vem do DB (não confia no que o frontend manda — fonte da verdade
+        # é o backend pra permitir continuar conversa em outro dispositivo).
+        history = [
+            {"role": m.role, "content": m.content}
+            for m in session.messages.order_by("created_at")[:50]
+        ]
 
         intent = classify_intent(question)
         days = detect_window_days(question)
@@ -1028,7 +1051,28 @@ class AskView(APIView):
         # Sugestões contextuais de follow-up (sempre úteis)
         suggestions = _build_followups(intent, blueprint)
 
+        # Persiste mensagens (pergunta + resposta) na sessão
+        ChatMessage.objects.create(
+            session=session,
+            role=ChatMessage.Role.USER,
+            content=question,
+        )
+        ChatMessage.objects.create(
+            session=session,
+            role=ChatMessage.Role.ASSISTANT,
+            content=answer,
+            blueprint=blueprint,
+            tools_called=tools_called or None,
+            used_llm=used_llm,
+            llm_provider=("openai" if used_llm and provider == "openai" else provider),
+            llm_error=llm_error or "",
+        )
+        # Mantém updated_at fresco para ordenação de sidebar
+        session.save(update_fields=["updated_at"])
+
         return Response({
+            "session_id": session.id,
+            "session_title": session.title,
             "answer": answer,
             "intent": intent,
             "blueprint": blueprint,
@@ -1041,6 +1085,14 @@ class AskView(APIView):
                 "iterations": agent_iterations,
             } if tools_called else None,
         })
+
+
+def _session_title_from_question(question: str) -> str:
+    """Gera título curto a partir da 1ª pergunta. Truncado em 80 chars."""
+    q = question.strip().split("\n")[0]
+    if len(q) > 80:
+        q = q[:77] + "…"
+    return q or "Nova conversa"
 
 
 class AnalyzeView(APIView):
