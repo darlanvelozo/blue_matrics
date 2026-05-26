@@ -1055,9 +1055,14 @@ def ltv_estimate(tenant_id: int, *, months_back: int = 12) -> dict[str, Any]:
     """
     LTV médio estimado por cliente.
 
-    Para tenants com Sale: receita média / nº clientes únicos com venda.
-    Para tenants sem Sale (varejo): cash_in dividido por clientes únicos
-    identificados em FinancialEntry receivable.
+    LTV honesto: divide APENAS a receita atribuível (lançamentos com customer
+    identificado) pelo nº de customers identificados. Receita anônima (PIX,
+    boleto sem nome, etc) NÃO entra — caso contrário, tenants varejistas com
+    muita receita anônima e poucos clientes nomeados teriam LTV inflado em
+    100× (incidente 2026-05-26: tenant tabuasthe-2 mostrava LTV R$ 832k
+    dividindo R$ 2,5M de receita total por apenas 3 customers identificados).
+
+    Se houver vendas via módulo Sale, prioriza esse caminho (mais preciso).
     """
     today = timezone.now().date()
     period = Period(
@@ -1065,48 +1070,70 @@ def ltv_estimate(tenant_id: int, *, months_back: int = 12) -> dict[str, Any]:
         end=today,
     )
 
-    # Receita total via FinancialEntry (mais robusto pra varejo)
+    # Caminho 1: Sale (mais preciso quando o tenant usa o módulo de vendas)
+    sale_qs = Sale.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        status=Sale.Status.CLOSED,
+        issued_at__gte=_aware(period.start),
+        issued_at__lte=_aware(period.end, end=True),
+        customer__isnull=False,
+    )
+    sale_revenue = float(sale_qs.aggregate(t=Sum("total"))["t"] or 0)
+    sale_customer_ids = set(sale_qs.values_list("customer_id", flat=True).distinct())
+    n_sale_customers = len(sale_customer_ids)
+
+    # Caminho 2: FinancialEntry — só com customer identificado (atribuível)
+    fe_qs = FinancialEntry.unsafe_objects.filter(
+        tenant_id=tenant_id,
+        direction=FinancialEntry.Direction.RECEIVABLE,
+        status=FinancialEntry.Status.PAID,
+        paid_at__gte=period.start,
+        paid_at__lte=period.end,
+        customer__isnull=False,
+    )
+    attributable_revenue = float(fe_qs.aggregate(t=Sum("amount"))["t"] or 0)
+    fe_customer_ids = set(fe_qs.values_list("customer_id", flat=True).distinct())
+    n_fe_customers = len(fe_customer_ids)
+
+    # Receita total no período (atribuível + anônima)
     total_revenue = cash_in_period(tenant_id, period)
+    anonymous_revenue = max(0.0, total_revenue - attributable_revenue)
 
-    # Clientes únicos identificados
-    customer_ids = (
-        FinancialEntry.unsafe_objects.filter(
-            tenant_id=tenant_id,
-            direction=FinancialEntry.Direction.RECEIVABLE,
-            status=FinancialEntry.Status.PAID,
-            paid_at__gte=period.start,
-            paid_at__lte=period.end,
-            customer__isnull=False,
-        )
-        .values_list("customer_id", flat=True)
-        .distinct()
+    # Decide qual base usar (Sale se houver, senão FinancialEntry)
+    if n_sale_customers > 0 and sale_revenue > 0:
+        ltv = sale_revenue / n_sale_customers
+        unique_customers = n_sale_customers
+        attributable = sale_revenue
+        source = "sales"
+    elif n_fe_customers > 0:
+        ltv = attributable_revenue / n_fe_customers
+        unique_customers = n_fe_customers
+        attributable = attributable_revenue
+        source = "financial_entries"
+    else:
+        ltv = 0.0
+        unique_customers = 0
+        attributable = 0.0
+        source = "none"
+
+    # Flag de baixa confiabilidade: muita receita anônima → LTV não representa
+    # o universo real. Frontend deve mostrar disclaimer quando isso for True.
+    low_confidence = (
+        total_revenue > 0
+        and (attributable / total_revenue if total_revenue else 0) < 0.5
     )
-    n_customers = len(list(customer_ids))
-
-    # Clientes via Sale (se houver)
-    sale_customer_ids = (
-        Sale.unsafe_objects.filter(
-            tenant_id=tenant_id,
-            status=Sale.Status.CLOSED,
-            issued_at__gte=_aware(period.start),
-            issued_at__lte=_aware(period.end, end=True),
-            customer__isnull=False,
-        )
-        .values_list("customer_id", flat=True)
-        .distinct()
-    )
-    n_sale_customers = len(list(sale_customer_ids))
-
-    # Use o maior dos dois (ou via Sale se houver)
-    effective = max(n_customers, n_sale_customers)
-    ltv = (total_revenue / effective) if effective > 0 else 0.0
 
     return {
         "ltv_avg": ltv,
+        "unique_customers": unique_customers,
         "total_revenue": total_revenue,
-        "unique_customers": effective,
+        "attributable_revenue": attributable,
+        "anonymous_revenue": anonymous_revenue,
+        "anonymous_pct": (anonymous_revenue / total_revenue * 100) if total_revenue else 0,
+        "low_confidence": low_confidence,
+        "source": source,
         "via_sales": n_sale_customers,
-        "via_financial": n_customers,
+        "via_financial": n_fe_customers,
         "months_back": months_back,
     }
 

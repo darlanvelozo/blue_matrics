@@ -389,7 +389,11 @@ function PredictivePanel({ data }: { data: PredictiveResponse }) {
           label="LTV médio"
           value={p.ltv.ltv_avg}
           format="currency"
-          subtitle={`${p.ltv.unique_customers} clientes únicos`}
+          subtitle={
+            p.ltv.low_confidence
+              ? `${p.ltv.unique_customers} clientes nomeados (${(p.ltv.anonymous_pct || 0).toFixed(0)}% da receita é anônima)`
+              : `${p.ltv.unique_customers} clientes únicos`
+          }
         />
         <PredictiveCard
           label="Taxa de recompra (90d)"

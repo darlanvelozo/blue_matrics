@@ -268,6 +268,11 @@ export interface RevenueForecast {
 export interface LtvInfo {
   ltv_avg: number;
   total_revenue: number;
+  attributable_revenue?: number;
+  anonymous_revenue?: number;
+  anonymous_pct?: number;
+  low_confidence?: boolean;
+  source?: "sales" | "financial_entries" | "none";
   unique_customers: number;
   via_sales: number;
   via_financial: number;

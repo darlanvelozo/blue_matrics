@@ -126,7 +126,11 @@ export default function CustomersPage() {
           <KpiTile
             label="LTV médio"
             value={formatCurrencyBRL(analytics.data.ltv.ltv_avg)}
-            subtitle={`${analytics.data.ltv.unique_customers} clientes únicos`}
+            subtitle={
+              analytics.data.ltv.low_confidence
+                ? `${analytics.data.ltv.unique_customers} clientes nomeados · ${(analytics.data.ltv.anonymous_pct || 0).toFixed(0)}% receita anônima`
+                : `${analytics.data.ltv.unique_customers} clientes únicos`
+            }
           />
           <KpiTile
             label="Taxa de recompra"
