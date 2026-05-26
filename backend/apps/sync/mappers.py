@@ -295,9 +295,16 @@ def map_financial_entry(
         or payload.get("pago")
     )
 
-    # paid_at: a v2 NÃO retorna data de pagamento explícita. Quando o status
-    # for "paid"/"ACQUITTED", usamos `data_alteracao` (momento em que o status
-    # mudou para pago) como proxy. Fallback final: data_competencia.
+    # paid_at: a v2 da Conta Azul NÃO retorna data de pagamento explícita.
+    # Heurística de fallback, em ordem de qualidade:
+    #   1. dataPagamento explícito (se algum dia aparecer)
+    #   2. data_competencia — quando o evento financeiro foi reconhecido. É a
+    #      melhor proxy para a data efetiva de pagamento na maioria dos casos.
+    #   3. data_vencimento — para boletos pagos pontualmente, é uma boa proxy.
+    #   4. NUNCA usar data_alteracao/data_criacao — refletem a data da
+    #      sincronização ou ajuste em massa, NÃO o pagamento real. Já causou
+    #      inflação artificial de receita (incidente 2026-05-26: R$ 1,1M
+    #      falsos concentrados em 2025-12-04 em vez de espalhados pelos meses).
     paid_at = _to_date(
         payload.get("dataPagamento")
         or payload.get("data_pagamento")
@@ -306,10 +313,12 @@ def map_financial_entry(
     )
     if paid_at is None and status == "paid":
         paid_at = _to_date(
-            payload.get("data_alteracao")
-            or payload.get("dataAlteracao")
-            or payload.get("data_competencia")
+            payload.get("data_competencia")
             or payload.get("dataCompetencia")
+            or payload.get("data_vencimento")
+            or payload.get("dataVencimento")
+            or payload.get("dueDate")
+            or payload.get("vencimento")
         )
 
     return {
