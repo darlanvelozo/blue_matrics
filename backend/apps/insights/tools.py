@@ -108,6 +108,8 @@ def get_kpis_period(tenant_id: int, days: int = 30) -> dict[str, Any]:
     co = kv2.cash_out_period(tenant_id, period)
     return {
         "period_days": days,
+        "period_start": period.start.isoformat(),
+        "period_end": period.end.isoformat(),
         "cash_in_brl": ci,
         "cash_out_brl": co,
         "net_profit_brl": ci - co,
@@ -117,6 +119,50 @@ def get_kpis_period(tenant_id: int, days: int = 30) -> dict[str, Any]:
         "expense_breakdown": kv2.expense_breakdown(tenant_id, period),
         "breakeven": kv2.above_breakeven(tenant_id, period),
         "roi_operational_pct": kv2.roi_operational(tenant_id, period),
+    }
+
+
+def get_kpis_for_period(
+    tenant_id: int, start_date: str, end_date: str,
+) -> dict[str, Any]:
+    """KPIs para um intervalo de datas arbitrário (ISO 8601 YYYY-MM-DD).
+
+    Use SEMPRE que o usuário perguntar sobre um mês/trimestre/ano específico
+    do passado, em vez de get_kpis_period (que só aceita N dias atrás).
+    Ex: 'dezembro 2025' → start_date=2025-12-01 end_date=2025-12-31.
+    """
+    from datetime import date
+
+    from apps.analytics import kpis_v2 as kv2
+    from apps.analytics.periods import Period
+
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except (ValueError, TypeError):
+        return {
+            "error": (
+                f"Datas inválidas: start_date={start_date!r} end_date={end_date!r}. "
+                "Use formato ISO 8601: YYYY-MM-DD"
+            )
+        }
+    if end < start:
+        return {"error": "end_date deve ser >= start_date"}
+
+    period = Period(start=start, end=end)
+    ci = kv2.cash_in_period(tenant_id, period)
+    co = kv2.cash_out_period(tenant_id, period)
+    return {
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+        "period_days": (end - start).days + 1,
+        "cash_in_brl": ci,
+        "cash_out_brl": co,
+        "net_profit_brl": ci - co,
+        "net_margin_pct": kv2.net_margin_pct(tenant_id, period),
+        "ebitda_brl": kv2.ebitda(tenant_id, period),
+        "expense_breakdown": kv2.expense_breakdown(tenant_id, period),
+        "has_data": ci > 0 or co > 0,
     }
 
 
@@ -454,21 +500,52 @@ TOOLS: dict[str, tuple[Callable, dict[str, Any]]] = {
             "function": {
                 "name": "get_kpis_period",
                 "description": (
-                    "KPIs HISTÓRICOS do período (já aconteceu): cash_in, cash_out, "
-                    "lucro líquido, margem, EBITDA, ponto de equilíbrio, ROI, "
-                    "custos fixos vs variáveis. Use para 'quanto faturei/gastei nos "
-                    "últimos X dias', 'qual foi minha margem', 'compare períodos'. "
-                    "NÃO use para previsão futura — use get_forecast."
+                    "KPIs HISTÓRICOS dos ÚLTIMOS N DIAS (terminando hoje): cash_in, "
+                    "cash_out, lucro líquido, margem, EBITDA, ponto de equilíbrio. "
+                    "Use APENAS para 'últimos X dias' (ex: 'últimos 30/90/365 dias'). "
+                    "Para mês/trimestre/ano específico (ex: 'dezembro/2025', 'Q3 2024'), "
+                    "use get_kpis_for_period com datas exatas. Para previsão futura, "
+                    "use get_forecast."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "days": {
                             "type": "integer",
-                            "description": "Tamanho do período em dias (ex: 30, 90, 365)",
+                            "description": "Tamanho do período em dias terminando hoje (30, 90, 365)",
                             "default": 30,
                         },
                     },
+                },
+            },
+        },
+    ),
+    "get_kpis_for_period": (
+        get_kpis_for_period,
+        {
+            "type": "function",
+            "function": {
+                "name": "get_kpis_for_period",
+                "description": (
+                    "KPIs HISTÓRICOS de um INTERVALO DE DATAS específico. Use para "
+                    "qualquer pergunta que mencione mês/trimestre/semestre/ano "
+                    "explícito (ex: 'dezembro de 2025', 'Q3 2024', 'segundo semestre'). "
+                    "Retorna also 'has_data: false' quando não há dados no período "
+                    "— NUNCA invente valores se has_data=false."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {
+                            "type": "string",
+                            "description": "Data início em ISO 8601 (YYYY-MM-DD)",
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "Data fim em ISO 8601 (YYYY-MM-DD)",
+                        },
+                    },
+                    "required": ["start_date", "end_date"],
                 },
             },
         },
