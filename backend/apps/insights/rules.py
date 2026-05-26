@@ -275,7 +275,11 @@ def rule_top_expense_category(tenant_id: int, *, ref: date) -> list[dict]:
     rows = kpis.top_categories(tenant_id, last, direction="payable", limit=5)
     if not rows:
         return []
-    total = sum(r["total"] for r in rows) or 0
+    # IMPORTANTE: divisor é o TOTAL DE DESPESAS do mês (não a soma das top 5).
+    # Antes (bug): sum(r['total'] for r in rows) — inflava o %, ex: Leasing
+    # virava 44,8% (sobre top 5 R$ 224k) em vez de 37,9% (sobre total R$ 265k).
+    from apps.analytics import kpis_v2
+    total = kpis_v2.cash_out_period(tenant_id, last)
     top = rows[0]
     pct = (top["total"] / total * 100) if total else 0
     if top["total"] == 0:
@@ -295,6 +299,7 @@ def rule_top_expense_category(tenant_id: int, *, ref: date) -> list[dict]:
             "category": top["name"],
             "category_id": top.get("category_id"),
             "total": top["total"],
+            "month_total": total,
             "share_pct": pct,
             "transactions": top.get("count"),
             "top5": rows,
@@ -310,7 +315,9 @@ def rule_top_revenue_category(tenant_id: int, *, ref: date) -> list[dict]:
     rows = kpis.top_categories(tenant_id, last, direction="receivable", limit=5)
     if not rows or rows[0]["total"] == 0:
         return []
-    total = sum(r["total"] for r in rows) or 0
+    # Divisor: TOTAL de receitas do mês (não soma das top 5)
+    from apps.analytics import kpis_v2
+    total = kpis_v2.cash_in_period(tenant_id, last)
     top = rows[0]
     pct = (top["total"] / total * 100) if total else 0
     return [{
