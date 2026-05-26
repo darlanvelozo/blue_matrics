@@ -72,7 +72,7 @@ export default function RegisterPage() {
             ))}
           </ul>
         </div>
-        <p className="text-xs text-white/60">© BlueMetrics</p>
+        <p className="text-xs text-white/60">© BI AZUL</p>
       </aside>
 
       {/* Formulário */}

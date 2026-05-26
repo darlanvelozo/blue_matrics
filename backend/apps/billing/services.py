@@ -50,6 +50,10 @@ class BillingService(Protocol):
 
     def reactivate_subscription(self, subscription: Subscription) -> None: ...
 
+    def create_portal_session(
+        self, *, subscription: Subscription, return_url: str,
+    ) -> str: ...
+
 
 # ---------------------------------------------------------------------------
 # Mock — usado em dev/teste sem Stripe configurado
@@ -90,13 +94,26 @@ class MockBillingService:
             update_fields=["cancel_at_period_end", "canceled_at", "updated_at"]
         )
 
+    def create_portal_session(
+        self, *, subscription: Subscription, return_url: str,
+    ) -> str:
+        # Em mock, devolve a própria URL de retorno com flag — frontend
+        # apenas mostra "modo dev, portal indisponível".
+        return f"{return_url}?status=mock_portal"
+
     # ------------------------------------------------------------------
     def _complete(self, subscription: Subscription, plan: Plan, session_id: str) -> None:
         now = timezone.now()
+        count = max(1, plan.billing_interval_count or 1)
+        if plan.billing_interval == Plan.BillingInterval.YEAR:
+            period_delta = relativedelta(years=count)
+        else:
+            period_delta = relativedelta(months=count)
+        period_end = now + period_delta
         subscription.plan = plan
         subscription.status = Subscription.Status.ACTIVE
         subscription.current_period_start = now
-        subscription.current_period_end = now + relativedelta(months=1)
+        subscription.current_period_end = period_end
         subscription.cancel_at_period_end = False
         subscription.canceled_at = None
         subscription.stripe_customer_id = f"mock_cus_{subscription.tenant_id}"
@@ -106,11 +123,11 @@ class MockBillingService:
         Invoice.objects.create(
             tenant=subscription.tenant,
             subscription=subscription,
-            amount=plan.price_monthly,
+            amount=plan.billing_amount or plan.price_monthly,
             currency=plan.currency,
             status=Invoice.Status.PAID,
             period_start=now.date(),
-            period_end=(now + relativedelta(months=1)).date(),
+            period_end=period_end.date(),
             paid_at=now,
             hosted_invoice_url=f"#mock-invoice-{session_id}",
             stripe_invoice_id=f"mock_in_{uuid.uuid4().hex[:12]}",
@@ -134,8 +151,26 @@ class StripeBillingService:
         self._stripe = stripe
 
     def _get_or_create_customer(self, subscription: Subscription) -> str:
+        # Se já temos um id, valida que ele existe no Stripe mode atual.
+        # Customers de test mode são inválidos em live mode (e vice-versa),
+        # e também o cliente pode ter sido deletado manualmente — caso em
+        # que precisamos criar um novo silenciosamente.
         if subscription.stripe_customer_id:
-            return subscription.stripe_customer_id
+            try:
+                self._stripe.Customer.retrieve(subscription.stripe_customer_id)
+                return subscription.stripe_customer_id
+            except self._stripe.error.InvalidRequestError as e:
+                msg = str(e).lower()
+                if "no such customer" in msg or "resource_missing" in msg:
+                    logger.warning(
+                        "Stripe customer %s inválido (provavelmente test/live mismatch); "
+                        "criando um novo para tenant %s",
+                        subscription.stripe_customer_id, subscription.tenant_id,
+                    )
+                    subscription.stripe_customer_id = ""
+                else:
+                    raise
+
         customer = self._stripe.Customer.create(
             metadata={"tenant_id": str(subscription.tenant_id)},
             name=subscription.tenant.name,
@@ -157,40 +192,116 @@ class StripeBillingService:
                 f"Plano {plan.code} sem stripe_price_id. "
                 "Cadastre o preço no Stripe e atualize o catálogo."
             )
-        customer_id = self._get_or_create_customer(subscription)
-        session = self._stripe.checkout.Session.create(
-            mode="subscription",
-            customer=customer_id,
-            line_items=[{"price": plan.stripe_price_id, "quantity": 1}],
-            success_url=success_url + "?status=success&session_id={CHECKOUT_SESSION_ID}",
-            cancel_url=cancel_url + "?status=canceled",
-            metadata={
-                "tenant_id": str(subscription.tenant_id),
-                "plan_code": plan.code,
-            },
-        )
-        return CheckoutSession(url=session.url, session_id=session.id)
+        try:
+            customer_id = self._get_or_create_customer(subscription)
+            session = self._stripe.checkout.Session.create(
+                mode="subscription",
+                customer=customer_id,
+                line_items=[{"price": plan.stripe_price_id, "quantity": 1}],
+                success_url=success_url + "?status=success&session_id={CHECKOUT_SESSION_ID}",
+                cancel_url=cancel_url + "?status=canceled",
+                metadata={
+                    "tenant_id": str(subscription.tenant_id),
+                    "plan_code": plan.code,
+                },
+            )
+            return CheckoutSession(url=session.url, session_id=session.id)
+        except self._stripe.error.StripeError as e:
+            logger.error("Stripe checkout falhou (tenant=%s plan=%s): %s",
+                         subscription.tenant_id, plan.code, e)
+            raise BillingError(
+                "Não conseguimos iniciar o pagamento agora. "
+                "Tente novamente em alguns instantes — se persistir, contate o suporte."
+            ) from e
 
     def cancel_subscription(self, subscription: Subscription) -> None:
+        # Sem assinatura Stripe (trial puro): só atualiza local
         if not subscription.stripe_subscription_id:
+            subscription.cancel_at_period_end = True
+            subscription.save(update_fields=["cancel_at_period_end", "updated_at"])
             return
-        self._stripe.Subscription.modify(
-            subscription.stripe_subscription_id, cancel_at_period_end=True
-        )
+        try:
+            self._stripe.Subscription.modify(
+                subscription.stripe_subscription_id, cancel_at_period_end=True
+            )
+        except self._stripe.error.StripeError as e:
+            logger.error("Stripe cancel falhou (sub=%s): %s",
+                         subscription.stripe_subscription_id, e)
+            raise BillingError(
+                "Falha ao cancelar no provedor de pagamento. Tente novamente."
+            ) from e
         subscription.cancel_at_period_end = True
         subscription.save(update_fields=["cancel_at_period_end", "updated_at"])
 
     def reactivate_subscription(self, subscription: Subscription) -> None:
         if not subscription.stripe_subscription_id:
+            subscription.cancel_at_period_end = False
+            subscription.canceled_at = None
+            subscription.save(
+                update_fields=["cancel_at_period_end", "canceled_at", "updated_at"]
+            )
             return
-        self._stripe.Subscription.modify(
-            subscription.stripe_subscription_id, cancel_at_period_end=False
-        )
+        try:
+            self._stripe.Subscription.modify(
+                subscription.stripe_subscription_id, cancel_at_period_end=False
+            )
+        except self._stripe.error.StripeError as e:
+            logger.error("Stripe reactivate falhou (sub=%s): %s",
+                         subscription.stripe_subscription_id, e)
+            raise BillingError(
+                "Falha ao reativar no provedor de pagamento. Tente novamente."
+            ) from e
         subscription.cancel_at_period_end = False
         subscription.canceled_at = None
         subscription.save(
             update_fields=["cancel_at_period_end", "canceled_at", "updated_at"]
         )
+
+    def create_portal_session(
+        self, *, subscription: Subscription, return_url: str,
+    ) -> str:
+        """
+        Cria uma Billing Portal Session do Stripe. O cliente é redirecionado
+        para uma página hospedada onde pode atualizar cartão, baixar faturas
+        antigas, cancelar/reativar e visualizar histórico.
+
+        Se ainda não há um customer Stripe (cliente nunca fez checkout),
+        levanta BillingError para o view exibir mensagem amigável.
+        """
+        # Valida customer atual e renova se inválido (test→live mismatch)
+        try:
+            customer_id = self._get_or_create_customer(subscription)
+        except self._stripe.error.StripeError as e:
+            logger.error("Stripe customer falhou (tenant=%s): %s",
+                         subscription.tenant_id, e)
+            raise BillingError(
+                "Não conseguimos abrir o painel de pagamento agora. "
+                "Tente novamente — se persistir, contate o suporte."
+            ) from e
+
+        # Customer só existe se subscription ainda não tem dados de pagamento?
+        # Para abrir o portal precisa de UMA assinatura ativa OU pelo menos
+        # ter passado por um checkout. Em trial sem checkout, o portal não
+        # tem o que mostrar.
+        if not subscription.stripe_subscription_id and subscription.status == Subscription.Status.TRIALING:
+            raise BillingError(
+                "Você ainda está no trial — só é possível gerenciar pagamento "
+                "depois de assinar um plano. Escolha um plano abaixo."
+            )
+
+        try:
+            session = self._stripe.billing_portal.Session.create(
+                customer=customer_id,
+                return_url=return_url,
+            )
+            return session.url
+        except self._stripe.error.StripeError as e:
+            logger.error("Stripe portal falhou (tenant=%s): %s",
+                         subscription.tenant_id, e)
+            raise BillingError(
+                "Não conseguimos abrir o painel de pagamento agora. "
+                "Tente novamente — se persistir, contate o suporte."
+            ) from e
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +324,7 @@ def get_billing_service() -> BillingService:
 # ---------------------------------------------------------------------------
 # Helpers de domínio (trial, criar sub default)
 # ---------------------------------------------------------------------------
-def ensure_subscription_for_tenant(tenant, *, default_plan_code: str = "starter") -> Subscription:
+def ensure_subscription_for_tenant(tenant, *, default_plan_code: str = "monthly") -> Subscription:
     """
     Cria uma Subscription em trial 7d para o tenant se ainda não tiver.
     Idempotente. Usado no momento do signup.

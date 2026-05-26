@@ -20,6 +20,9 @@ def _serialize_plan(p: Plan) -> dict:
         "name": p.name,
         "description": p.description,
         "price_monthly": float(p.price_monthly),
+        "billing_amount": float(p.billing_amount),
+        "billing_interval": p.billing_interval,
+        "billing_interval_count": p.billing_interval_count,
         "currency": p.currency,
         "max_users": p.max_users,
         "features": p.features,
@@ -153,7 +156,13 @@ class CancelView(APIView):
                 {"error": {"code": "no_subscription", "message": "Sem assinatura."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        get_billing_service().cancel_subscription(sub)
+        try:
+            get_billing_service().cancel_subscription(sub)
+        except BillingError as e:
+            return Response(
+                {"error": {"code": "cancel_failed", "message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         sub.refresh_from_db()
         return Response(_serialize_subscription(sub))
 
@@ -175,9 +184,52 @@ class ReactivateView(APIView):
                 {"error": {"code": "no_subscription", "message": "Sem assinatura."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        get_billing_service().reactivate_subscription(sub)
+        try:
+            get_billing_service().reactivate_subscription(sub)
+        except BillingError as e:
+            return Response(
+                {"error": {"code": "reactivate_failed", "message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         sub.refresh_from_db()
         return Response(_serialize_subscription(sub))
+
+
+class PortalView(APIView):
+    """
+    Cria uma Billing Portal Session do Stripe.
+    Resp: {url} pra redirecionar. Customer Portal permite ao cliente
+    atualizar cartão, baixar faturas, cancelar/reativar sem suporte.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        tenant = get_request_tenant(request)
+        if tenant is None:
+            return Response(
+                {"error": {"code": "no_tenant", "message": "Tenant não encontrado."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            sub = Subscription.objects.get(tenant=tenant)
+        except Subscription.DoesNotExist:
+            return Response(
+                {"error": {"code": "no_subscription", "message": "Sem assinatura."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        front = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+        try:
+            url = get_billing_service().create_portal_session(
+                subscription=sub,
+                return_url=f"{front.rstrip('/')}/app/billing",
+            )
+        except BillingError as e:
+            return Response(
+                {"error": {"code": "portal_failed", "message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"url": url})
 
 
 class StripeWebhookView(APIView):
@@ -283,9 +335,91 @@ def _on_subscription_deleted(obj: dict) -> None:
     sub.save()
 
 
+def _primary_owner_email(sub: Subscription) -> tuple[str, str] | None:
+    """Acha o e-mail do owner do tenant para mandar alertas. Retorna (email, nome)."""
+    membership = (
+        sub.tenant.memberships
+        .select_related("user")
+        .filter(is_active=True, role="owner")
+        .order_by("created_at")
+        .first()
+    )
+    if not membership or not membership.user.email:
+        return None
+    return (membership.user.email, membership.user.full_name or membership.user.email.split("@")[0])
+
+
+def _on_invoice_payment_failed(obj: dict) -> None:
+    sub_id = obj.get("subscription")
+    if not sub_id:
+        return
+    sub = Subscription.objects.filter(stripe_subscription_id=sub_id).first()
+    if sub is None:
+        return
+    sub.status = Subscription.Status.PAST_DUE
+    sub.save(update_fields=["status", "updated_at"])
+
+    from django.utils import timezone as tz
+    Invoice.objects.update_or_create(
+        stripe_invoice_id=obj["id"],
+        defaults={
+            "tenant": sub.tenant,
+            "subscription": sub,
+            "amount": (obj.get("amount_due") or 0) / 100,
+            "currency": (obj.get("currency") or "brl").upper(),
+            "status": Invoice.Status.OPEN,
+            "hosted_invoice_url": obj.get("hosted_invoice_url") or "",
+            "invoice_pdf_url": obj.get("invoice_pdf") or "",
+        },
+    )
+    target = _primary_owner_email(sub)
+    if target:
+        from apps.notifications.mailer import send_payment_failed
+        front = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        amount = f"R$ {(obj.get('amount_due') or 0) / 100:.2f}".replace(".", ",")
+        send_payment_failed(
+            to=target[0],
+            name=target[1],
+            amount=amount,
+            retry_url=obj.get("hosted_invoice_url") or f"{front}/app/billing",
+        )
+
+
+def _on_trial_will_end(obj: dict) -> None:
+    """customer.subscription.trial_will_end: dispara ~3 dias antes do fim do trial."""
+    sub_id = obj.get("id")
+    if not sub_id:
+        return
+    sub = Subscription.objects.filter(stripe_subscription_id=sub_id).first()
+    if sub is None:
+        return
+    target = _primary_owner_email(sub)
+    if not target:
+        return
+    from django.utils import timezone as tz
+
+    from apps.notifications.mailer import send_trial_ending
+    trial_end_ts = obj.get("trial_end")
+    if trial_end_ts:
+        days_left = max(1, (
+            tz.datetime.fromtimestamp(trial_end_ts, tz=tz.get_current_timezone()) - tz.now()
+        ).days)
+    else:
+        days_left = 3
+    front = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+    send_trial_ending(
+        to=target[0],
+        name=target[1],
+        days_left=days_left,
+        billing_url=f"{front}/app/billing",
+    )
+
+
 _WEBHOOK_HANDLERS = {
     "checkout.session.completed": _on_checkout_completed,
     "invoice.paid": _on_invoice_paid,
+    "invoice.payment_failed": _on_invoice_payment_failed,
     "customer.subscription.updated": _on_subscription_updated,
     "customer.subscription.deleted": _on_subscription_deleted,
+    "customer.subscription.trial_will_end": _on_trial_will_end,
 }

@@ -9,8 +9,9 @@ from rest_framework.views import APIView
 
 from apps.tenants.utils import get_request_tenant
 
+from . import llm
 from .models import Insight
-from .rules import generate_insights_for_tenant
+from .rules import generate_insights_for_tenant, materialize_insights, run_all_rules
 
 
 def _serialize(i: Insight) -> dict:
@@ -51,7 +52,12 @@ class ListInsightsView(APIView):
 
 
 class GenerateInsightsView(APIView):
-    """POST → roda as regras e persiste novos insights."""
+    """POST → roda as regras e persiste novos insights.
+
+    Query params:
+      - enrich=true: enriquece narrativas via LLM (se INSIGHT_LLM_PROVIDER ativo).
+        Cada candidato vira uma chamada à LLM; falhas mantêm a versão das regras.
+    """
 
     permission_classes = [IsAuthenticated]
 
@@ -62,8 +68,62 @@ class GenerateInsightsView(APIView):
                 {"error": {"code": "no_tenant", "message": "Tenant não encontrado."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        stats = generate_insights_for_tenant(tenant.id)
-        return Response({"stats": stats}, status=status.HTTP_202_ACCEPTED)
+
+        enrich_flag = request.query_params.get("enrich", "").lower() in ("1", "true", "yes")
+
+        # Sem enrichment: caminho rápido
+        if not enrich_flag:
+            stats = generate_insights_for_tenant(tenant.id)
+            return Response(
+                {"stats": stats, "llm": {"requested": False, "enabled": llm.is_enabled()}},
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        # Enrichment requisitado mas LLM não configurada → cair em rules-only
+        if not llm.is_enabled():
+            stats = generate_insights_for_tenant(tenant.id)
+            return Response(
+                {
+                    "stats": stats,
+                    "llm": {"requested": True, "enabled": False, "reason": "provider_disabled_or_missing_key"},
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        # Caminho com LLM: roda regras, enriquece cada candidato, persiste
+        candidates = run_all_rules(tenant.id)
+        snapshot = llm.build_kpis_snapshot(tenant.id)
+        enriched_count = 0
+        failed_count = 0
+        for c in candidates:
+            result = llm.enrich(c, snapshot)
+            if result.enriched:
+                c["title"] = result.title
+                c["narrative"] = result.narrative
+                c["generated_by"] = "llm"
+                data = c.get("data") or {}
+                data["recommendations"] = result.recommendations
+                c["data"] = data
+                enriched_count += 1
+            else:
+                failed_count += 1
+        created, updated = materialize_insights(tenant.id, candidates)
+        return Response(
+            {
+                "stats": {
+                    "candidates": len(candidates),
+                    "created": created,
+                    "updated": updated,
+                },
+                "llm": {
+                    "requested": True,
+                    "enabled": True,
+                    "enriched": enriched_count,
+                    "failed": failed_count,
+                },
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class MarkReadView(APIView):

@@ -62,8 +62,11 @@ def _no_tenant_response() -> Response:
 # ===========================================================================
 class CustomersListView(APIView):
     """
-    GET /api/explorer/customers?q=&page=&page_size=
-    Annotated with sales count and total spent.
+    GET /api/explorer/customers?q=&page=&page_size=&type=customer|supplier|all
+
+    Anota agregados financeiros: total recebido (cliente), total pago (fornecedor),
+    nº de transações e data da última. Para tenants que não usam o módulo Sale
+    (ex.: varejo), estes valores são a única forma significativa de ranquear.
     """
 
     permission_classes = [IsAuthenticated]
@@ -74,42 +77,96 @@ class CustomersListView(APIView):
             return _no_tenant_response()
 
         q = request.query_params.get("q", "").strip()
+        kind = (request.query_params.get("type") or "all").lower()
         page, page_size = parse_pagination(request)
+
+        from django.db.models import Q
+        from apps.sync.models import FinancialEntry
+
+        # Filtros condicionais aplicados nas annotations
+        recv_filter = Q(financial_entries__direction=FinancialEntry.Direction.RECEIVABLE)
+        pay_filter = Q(financial_entries__direction=FinancialEntry.Direction.PAYABLE)
 
         qs = (
             Customer.unsafe_objects.filter(tenant_id=tenant.id)
             .annotate(
-                total_spent=Sum(
-                    "sales__total",
-                    filter=Sale.Status.CLOSED == Sale._meta.get_field("status"),
+                total_received=Sum("financial_entries__amount", filter=recv_filter),
+                total_paid=Sum("financial_entries__amount", filter=pay_filter),
+                received_count=Count("financial_entries", filter=recv_filter),
+                paid_count=Count("financial_entries", filter=pay_filter),
+                last_received=Max("financial_entries__paid_at", filter=recv_filter),
+                last_paid=Max("financial_entries__paid_at", filter=pay_filter),
+                sales_count=Count("sales", distinct=True),
+                total_spent_sales=Sum(
+                    "sales__total", filter=Q(sales__status=Sale.Status.CLOSED),
                 ),
-                sales_count=Count("sales"),
-                last_purchase=Max("sales__issued_at"),
             )
             .order_by("name")
         )
+
         if q:
             qs = qs.filter(name__icontains=q)
+        if kind == "customer":
+            qs = qs.filter(total_received__gt=0)
+        elif kind == "supplier":
+            qs = qs.filter(total_paid__gt=0)
+        elif kind == "active":
+            qs = qs.filter(Q(total_received__gt=0) | Q(total_paid__gt=0) | Q(sales_count__gt=0))
+
+        # Sumário GLOBAL (do tenant inteiro — ignora filtros de tipo/busca)
+        agg_real = Customer.unsafe_objects.filter(tenant_id=tenant.id).aggregate(
+            grand_received=Sum(
+                "financial_entries__amount",
+                filter=recv_filter,
+            ),
+            grand_paid=Sum(
+                "financial_entries__amount",
+                filter=pay_filter,
+            ),
+        )
 
         items, meta = paginate(qs, page=page, page_size=page_size)
 
+        results = []
+        for c in items:
+            received = float(c.total_received or 0)
+            paid = float(c.total_paid or 0)
+            from_sales = float(c.total_spent_sales or 0)
+            # Combina datas de Sale e FinancialEntry para "última transação"
+            last_dates = [d for d in [c.last_received, c.last_paid] if d]
+            last_txn = max(last_dates).isoformat() if last_dates else None
+
+            customer_type = []
+            if received > 0 or (c.sales_count or 0) > 0:
+                customer_type.append("Cliente")
+            if paid > 0:
+                customer_type.append("Fornecedor")
+
+            results.append({
+                "id": c.id,
+                "external_id": c.external_id,
+                "name": c.name,
+                "document": c.document or "",
+                "email": c.email or "",
+                "phone": c.phone or "",
+                "is_active": c.is_active,
+                "type": " · ".join(customer_type) or "—",
+                "total_received": received,
+                "total_paid": paid,
+                "received_count": c.received_count or 0,
+                "paid_count": c.paid_count or 0,
+                "last_transaction": last_txn,
+                "sales_count": c.sales_count or 0,
+                "total_spent_sales": from_sales,
+            })
+
         return Response({
-            "results": [
-                {
-                    "id": c.id,
-                    "external_id": c.external_id,
-                    "name": c.name,
-                    "document": c.document,
-                    "email": c.email,
-                    "phone": c.phone,
-                    "is_active": c.is_active,
-                    "total_spent": _to_float(c.total_spent),
-                    "sales_count": c.sales_count or 0,
-                    "last_purchase": c.last_purchase.isoformat() if c.last_purchase else None,
-                }
-                for c in items
-            ],
+            "results": results,
             "meta": meta,
+            "summary": {
+                "total_received": _to_float(agg_real["grand_received"]),
+                "total_paid": _to_float(agg_real["grand_paid"]),
+            },
         })
 
 
@@ -133,6 +190,18 @@ class ProductsListView(APIView):
         if q:
             qs = qs.filter(name__icontains=q)
 
+        # Sumário do conjunto filtrado (antes da paginação)
+        from django.db.models import DecimalField, ExpressionWrapper, F, Sum
+        agg = qs.annotate(
+            estoque_valor=ExpressionWrapper(
+                F("stock_balance") * F("cost"),
+                output_field=DecimalField(max_digits=20, decimal_places=2),
+            ),
+        ).aggregate(
+            total_stock_value=Sum("estoque_valor"),
+            total_stock_qty=Sum("stock_balance"),
+        )
+
         items, meta = paginate(qs, page=page, page_size=page_size)
 
         return Response({
@@ -144,6 +213,8 @@ class ProductsListView(APIView):
                     "name": p.name,
                     "price": _to_float(p.price),
                     "cost": _to_float(p.cost),
+                    "stock_balance": _to_float(p.stock_balance),
+                    "stock_value": _to_float(p.stock_balance * p.cost),
                     "margin_pct": (
                         float((p.price - p.cost) / p.price * 100)
                         if p.price and p.cost is not None else 0.0
@@ -153,6 +224,10 @@ class ProductsListView(APIView):
                 for p in items
             ],
             "meta": meta,
+            "summary": {
+                "total_stock_value": _to_float(agg["total_stock_value"]),
+                "total_stock_qty": _to_float(agg["total_stock_qty"]),
+            },
         })
 
 

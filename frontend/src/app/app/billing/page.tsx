@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -10,8 +10,8 @@ import {
   FileText,
   FlaskConical,
   Loader2,
+  Settings as SettingsIcon,
   Sparkles,
-  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,8 +20,11 @@ import { ApiError } from "@/lib/api";
 import {
   cancelSubscription,
   getSubscription,
+  openCustomerPortal,
+  planCycle,
   reactivateSubscription,
   startCheckout,
+  type BillingCycle,
   type InvoiceData,
   type Plan,
   type PlanCode,
@@ -35,6 +38,18 @@ const STATUS_LABEL: Record<SubscriptionData["status"], { label: string; cls: str
   past_due: { label: "Pagamento pendente", cls: "bg-amber-500/10 text-amber-600 border-amber-500/30" },
   canceled: { label: "Cancelada", cls: "bg-zinc-500/10 text-zinc-500 border-zinc-500/30" },
   incomplete: { label: "Incompleta", cls: "bg-red-500/10 text-red-600 border-red-500/30" },
+};
+
+const CYCLE_LABEL: Record<BillingCycle, string> = {
+  month: "Mensal",
+  semester: "Semestral",
+  year: "Anual",
+};
+
+const CYCLE_SUFFIX: Record<BillingCycle, string> = {
+  month: "/mês",
+  semester: "/semestre",
+  year: "/ano",
 };
 
 export default function BillingPage() {
@@ -73,6 +88,22 @@ function BillingInner() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["billing", "subscription"] }),
   });
 
+  const portalMutation = useMutation({
+    mutationFn: openCustomerPortal,
+    onSuccess: ({ url }) => {
+      // Mock retorna nossa própria URL com flag — ignoramos
+      if (url.includes("status=mock_portal")) {
+        alert(
+          "Portal Stripe não disponível em modo desenvolvimento. " +
+          "Em produção, este botão abre a página da Stripe onde o cliente " +
+          "atualiza cartão, baixa faturas e gerencia a assinatura."
+        );
+        return;
+      }
+      window.location.href = url;
+    },
+  });
+
   return (
     <div className="space-y-6">
       <header>
@@ -81,7 +112,7 @@ function BillingInner() {
           Planos & Assinatura
         </h1>
         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-          Gerencie seu plano, faturas e pagamentos.
+          Plano único com acesso completo. Escolha entre Mensal, Semestral ou Anual.
         </p>
       </header>
 
@@ -125,8 +156,11 @@ function BillingInner() {
             data={data.subscription}
             onCancel={() => cancelMutation.mutate()}
             onReactivate={() => reactivateMutation.mutate()}
+            onOpenPortal={() => portalMutation.mutate()}
             cancelling={cancelMutation.isPending}
             reactivating={reactivateMutation.isPending}
+            openingPortal={portalMutation.isPending}
+            canOpenPortal={data.provider === "stripe"}
           />
 
           {(cancelMutation.error || reactivateMutation.error) instanceof ApiError && (
@@ -138,7 +172,7 @@ function BillingInner() {
 
           <section>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--muted-foreground)]">
-              Trocar de plano
+              Escolha seu ciclo de cobrança
             </h2>
             <PlansGrid
               current={data.subscription.plan.code}
@@ -166,16 +200,27 @@ function CurrentPlanCard({
   data,
   onCancel,
   onReactivate,
+  onOpenPortal,
   cancelling,
   reactivating,
+  openingPortal,
+  canOpenPortal,
 }: {
   data: SubscriptionData;
   onCancel: () => void;
   onReactivate: () => void;
+  onOpenPortal: () => void;
   cancelling: boolean;
   reactivating: boolean;
+  openingPortal: boolean;
+  canOpenPortal: boolean;
 }) {
   const status = STATUS_LABEL[data.status];
+  const cycle = planCycle(data.plan);
+  const cycleSuffix = CYCLE_SUFFIX[cycle];
+  const displayAmount = data.plan.billing_amount || data.plan.price_monthly;
+  const isRecurringNonMonthly = cycle !== "month";
+
   return (
     <Card>
       <CardHeader>
@@ -193,8 +238,13 @@ function CurrentPlanCard({
             <CardDescription className="mt-1">{data.plan.description}</CardDescription>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold">{formatCurrencyBRL(data.plan.price_monthly)}</p>
-            <p className="text-xs text-[color:var(--muted-foreground)]">por mês</p>
+            <p className="text-2xl font-bold">{formatCurrencyBRL(displayAmount)}</p>
+            <p className="text-xs text-[color:var(--muted-foreground)]">por {CYCLE_LABEL[cycle].toLowerCase()}</p>
+            {isRecurringNonMonthly && (
+              <p className="mt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+                equivale a {formatCurrencyBRL(data.plan.price_monthly)}/mês
+              </p>
+            )}
           </div>
         </div>
       </CardHeader>
@@ -232,6 +282,20 @@ function CurrentPlanCard({
         </dl>
 
         <div className="flex flex-wrap gap-2">
+          {canOpenPortal && (data.status === "active" || data.status === "past_due") && (
+            <Button
+              variant="outline"
+              onClick={onOpenPortal}
+              disabled={openingPortal}
+            >
+              {openingPortal ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <SettingsIcon className="mr-2 h-4 w-4" />
+              )}
+              Gerenciar pagamento
+            </Button>
+          )}
           {data.cancel_at_period_end ? (
             <Button onClick={onReactivate} disabled={reactivating}>
               {reactivating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -244,6 +308,13 @@ function CurrentPlanCard({
             </Button>
           ) : null}
         </div>
+        {canOpenPortal && (
+          <p className="text-[11px] text-[color:var(--muted-foreground)]">
+            Em <strong>Gerenciar pagamento</strong> você atualiza cartão,
+            baixa faturas anteriores e altera dados de cobrança — tudo na
+            página segura da Stripe.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -269,28 +340,136 @@ function PlansGrid({
     },
   });
 
+  const initialCycle: BillingCycle =
+    current === "annual" ? "year"
+    : current === "semestral" ? "semester"
+    : "month";
+  const [selectedCycle, setSelectedCycle] = useState<BillingCycle>(initialCycle);
+
+  const byCycle = useMemo(() => {
+    const map: Record<BillingCycle, Plan | undefined> = {
+      month: undefined,
+      semester: undefined,
+      year: undefined,
+    };
+    plansData?.plans.forEach((p) => {
+      const c = planCycle(p);
+      if (p.code === "monthly" || p.code === "semestral" || p.code === "annual") {
+        map[c] = p;
+      }
+    });
+    return map;
+  }, [plansData]);
+
   if (isLoading || !plansData) {
     return (
       <div className="grid gap-4 sm:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-72" />
+          <Skeleton key={i} className="h-80" />
         ))}
       </div>
     );
   }
 
+  const monthly = byCycle.month;
+  const semester = byCycle.semester;
+  const annual = byCycle.year;
+
+  if (!monthly || !semester || !annual) {
+    return (
+      <Banner kind="error">
+        <AlertTriangle className="h-4 w-4" />
+        Catálogo de planos incompleto. Execute as migrations de billing.
+      </Banner>
+    );
+  }
+
+  const selected = byCycle[selectedCycle]!;
+  const monthlyTotal12 = monthly.billing_amount * 12;
+  const semesterTotal12 = semester.billing_amount * 2;
+  const savingsSemester = monthlyTotal12 - semesterTotal12;
+  const savingsSemesterPct = Math.round((savingsSemester / monthlyTotal12) * 100);
+  const savingsAnnual = monthlyTotal12 - annual.billing_amount;
+  const savingsAnnualPct = Math.round((savingsAnnual / monthlyTotal12) * 100);
+
+  const savingsByCycle: Record<BillingCycle, number> = {
+    month: 0,
+    semester: savingsSemester,
+    year: savingsAnnual,
+  };
+  const pctByCycle: Record<BillingCycle, number> = {
+    month: 0,
+    semester: savingsSemesterPct,
+    year: savingsAnnualPct,
+  };
+
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      {plansData.plans.map((p) => (
+    <div className="space-y-4">
+      <CycleToggle
+        value={selectedCycle}
+        onChange={setSelectedCycle}
+        savingsPct={pctByCycle}
+      />
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <PlanCard
-          key={p.code}
-          plan={p}
-          isCurrent={p.code === current}
-          highlight={p.code === "growth"}
-          onSelect={() => onSelect(p.code)}
-          loading={busy && busyCode === p.code}
+          plan={selected}
+          isCurrent={selected.code === current}
+          savings={savingsByCycle[selectedCycle]}
+          onSelect={() => onSelect(selected.code)}
+          loading={busy && busyCode === selected.code}
         />
-      ))}
+        <ComparisonAside
+          monthly={monthly}
+          semester={semester}
+          annual={annual}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CycleToggle({
+  value,
+  onChange,
+  savingsPct,
+}: {
+  value: BillingCycle;
+  onChange: (v: BillingCycle) => void;
+  savingsPct: Record<BillingCycle, number>;
+}) {
+  const cycles: BillingCycle[] = ["month", "semester", "year"];
+  return (
+    <div className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--background)] p-1 text-xs font-medium">
+      {cycles.map((c) => {
+        const active = value === c;
+        return (
+          <button
+            key={c}
+            type="button"
+            onClick={() => onChange(c)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition",
+              active
+                ? "bg-[color:var(--primary)] text-white shadow"
+                : "text-[color:var(--muted-foreground)] hover:text-[color:var(--foreground)]",
+            )}
+          >
+            {CYCLE_LABEL[c]}
+            {savingsPct[c] > 0 && (
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.5 text-[9px] font-semibold",
+                  active
+                    ? "bg-white/20 text-white"
+                    : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+                )}
+              >
+                −{savingsPct[c]}%
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -298,51 +477,63 @@ function PlansGrid({
 function PlanCard({
   plan,
   isCurrent,
-  highlight,
+  savings,
   onSelect,
   loading,
 }: {
   plan: Plan;
   isCurrent: boolean;
-  highlight: boolean;
+  savings: number;
   onSelect: () => void;
   loading: boolean;
 }) {
+  const cycle = planCycle(plan);
+  const headlineAmount = plan.billing_amount;
+  const cycleSuffix = CYCLE_SUFFIX[cycle];
+  const isRecurringNonMonthly = cycle !== "month";
+
   return (
-    <Card
-      className={cn(
-        "relative flex flex-col",
-        highlight && "border-blue-500/40 shadow-lg ring-1 ring-blue-500/20",
-      )}
-    >
-      {highlight && !isCurrent && (
-        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-blue-500 px-2.5 py-0.5 text-[10px] font-semibold text-white shadow">
-          Mais popular
-        </span>
-      )}
+    <Card className="relative flex flex-col border-blue-500/40 shadow-lg ring-1 ring-blue-500/20">
       {isCurrent && (
-        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-green-500 px-2.5 py-0.5 text-[10px] font-semibold text-white shadow">
+        <span className="absolute -top-2.5 left-6 rounded-full bg-green-500 px-2.5 py-0.5 text-[10px] font-semibold text-white shadow">
           Plano atual
         </span>
       )}
-      <CardContent className="flex flex-1 flex-col p-5">
-        <h3 className="text-base font-semibold">{plan.name}</h3>
-        <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">{plan.description}</p>
-        <div className="mt-4 flex items-baseline gap-1">
-          <span className="text-3xl font-bold">{formatCurrencyBRL(plan.price_monthly)}</span>
-          <span className="text-xs text-[color:var(--muted-foreground)]">/mês</span>
+      <CardContent className="flex flex-1 flex-col p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{plan.name}</h3>
+            <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">{plan.description}</p>
+          </div>
+          {savings > 0 && (
+            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+              Economiza {formatCurrencyBRL(savings)}
+            </span>
+          )}
         </div>
-        <ul className="mt-4 flex-1 space-y-1.5 text-xs">
+
+        <div className="mt-5 flex items-baseline gap-1">
+          <span className="text-4xl font-bold">{formatCurrencyBRL(headlineAmount)}</span>
+          <span className="text-sm text-[color:var(--muted-foreground)]">{cycleSuffix}</span>
+        </div>
+        {isRecurringNonMonthly && (
+          <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">
+            equivale a <strong className="text-[color:var(--foreground)]">{formatCurrencyBRL(plan.price_monthly)}</strong>/mês
+          </p>
+        )}
+
+        <ul className="mt-5 flex-1 space-y-2 text-sm">
           {plan.features.map((f) => (
             <li key={f} className="flex items-start gap-2">
-              <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-blue-500" />
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
               <span>{f}</span>
             </li>
           ))}
         </ul>
+
         <Button
-          className="mt-5"
-          variant={isCurrent ? "outline" : highlight ? "default" : "outline"}
+          className="mt-6"
+          size="lg"
           disabled={isCurrent || loading}
           onClick={onSelect}
         >
@@ -351,8 +542,71 @@ function PlanCard({
           ) : isCurrent ? null : (
             <Sparkles className="mr-2 h-3.5 w-3.5" />
           )}
-          {isCurrent ? "Plano atual" : `Mudar para ${plan.name}`}
+          {isCurrent ? "Plano atual" : `Assinar ${plan.name}`}
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ComparisonAside({
+  monthly,
+  semester,
+  annual,
+}: {
+  monthly: Plan;
+  semester: Plan;
+  annual: Plan;
+}) {
+  const monthlyTotal12 = monthly.billing_amount * 12;
+  const semesterTotal12 = semester.billing_amount * 2;
+  const annualTotal = annual.billing_amount;
+  return (
+    <Card className="flex flex-col">
+      <CardContent className="flex flex-1 flex-col gap-4 p-5 text-sm">
+        <div>
+          <h4 className="text-sm font-semibold">Comparação em 12 meses</h4>
+          <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">
+            Mesmo acesso, mesmos recursos. Quanto mais longo o ciclo, maior o desconto.
+          </p>
+        </div>
+        <dl className="space-y-2 border-t border-[color:var(--border)] pt-4">
+          <div className="flex items-center justify-between">
+            <dt className="text-xs">
+              <span className="font-medium">Mensal</span>
+              <span className="ml-1 text-[color:var(--muted-foreground)]">× 12</span>
+            </dt>
+            <dd className="font-mono text-xs">
+              {formatCurrencyBRL(monthlyTotal12)}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-xs">
+              <span className="font-medium">Semestral</span>
+              <span className="ml-1 text-[color:var(--muted-foreground)]">× 2</span>
+            </dt>
+            <dd className="font-mono text-xs">
+              {formatCurrencyBRL(semesterTotal12)}
+              <span className="ml-1 text-[10px] text-emerald-600 dark:text-emerald-400">
+                −{formatCurrencyBRL(monthlyTotal12 - semesterTotal12)}
+              </span>
+            </dd>
+          </div>
+          <div className="flex items-center justify-between border-t border-[color:var(--border)] pt-2">
+            <dt className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+              Anual
+            </dt>
+            <dd className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-400">
+              {formatCurrencyBRL(annualTotal)}
+              <span className="ml-1 text-[10px]">
+                −{formatCurrencyBRL(monthlyTotal12 - annualTotal)}
+              </span>
+            </dd>
+          </div>
+        </dl>
+        <div className="rounded-md bg-[color:var(--muted)] px-3 py-2 text-[11px] text-[color:var(--muted-foreground)]">
+          A diferença entre os planos é só o ciclo de cobrança — acesso e features são idênticos.
+        </div>
       </CardContent>
     </Card>
   );

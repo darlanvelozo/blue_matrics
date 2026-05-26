@@ -1,6 +1,7 @@
-"""Insights gerados a partir dos dados Silver."""
+"""Insights gerados a partir dos dados Silver + histórico de chat IA."""
 from __future__ import annotations
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -25,6 +26,12 @@ class Insight(TenantScopedModel):
         CASH_NEGATIVE = "cash_negative", "Caixa negativo"
         TICKET_DROP = "ticket_drop", "Ticket médio caindo"
         SEASONALITY = "seasonality", "Sazonalidade detectada"
+        # Regras baseadas em FinancialEntry (tenants sem Sale, ex.: varejo/restaurante)
+        TOP_EXPENSE_CATEGORY = "top_expense_category", "Categoria de maior despesa"
+        TOP_REVENUE_CATEGORY = "top_revenue_category", "Categoria de maior receita"
+        UPCOMING_PAYABLES = "upcoming_payables", "Compromissos próximos"
+        SUPPLIER_CONCENTRATION = "supplier_concentration", "Concentração em fornecedor"
+        CASH_IN_TREND = "cash_in_trend", "Tendência de recebimentos"
 
     class Severity(models.TextChoices):
         INFO = "info", "Informação"
@@ -72,3 +79,61 @@ class Insight(TenantScopedModel):
     @property
     def is_read(self) -> bool:
         return self.read_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Histórico do chat IA — uma "conversa" agrupa pergunta+resposta+pergunta...
+# Escopo: por (tenant, user) — cada usuário do tenant tem suas conversas.
+# ---------------------------------------------------------------------------
+class ChatSession(TenantScopedModel):
+    """Uma conversa do chat IA. Auto-titulada a partir da primeira pergunta."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chat_sessions",
+    )
+    title = models.CharField(max_length=200, blank=True, default="Nova conversa")
+
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [
+            models.Index(fields=["tenant", "user", "-updated_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"ChatSession({self.user_id}, {self.title[:30]})"
+
+
+class ChatMessage(models.Model):
+    """Mensagem individual dentro de uma ChatSession."""
+
+    class Role(models.TextChoices):
+        USER = "user", "Usuário"
+        ASSISTANT = "assistant", "Assistente"
+
+    session = models.ForeignKey(
+        ChatSession, on_delete=models.CASCADE, related_name="messages",
+    )
+    role = models.CharField(max_length=16, choices=Role.choices)
+    content = models.TextField()
+    # Metadados da resposta do assistente (vazio em mensagens do usuário)
+    blueprint = models.JSONField(null=True, blank=True)
+    tools_called = models.JSONField(null=True, blank=True)
+    used_llm = models.BooleanField(default=False)
+    llm_provider = models.CharField(max_length=32, blank=True, default="")
+    llm_error = models.CharField(max_length=64, blank=True, default="")
+
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["session", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.role}: {self.content[:50]}"

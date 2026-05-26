@@ -17,7 +17,7 @@ class TestMockBillingService:
     def test_create_checkout_completes_subscription(self, make_tenant):
         t = make_tenant()
         sub = ensure_subscription_for_tenant(t)
-        plan = Plan.objects.get(code="growth")
+        plan = Plan.objects.get(code="annual")
 
         svc = MockBillingService()
         session = svc.create_checkout_session(
@@ -32,9 +32,9 @@ class TestMockBillingService:
         assert sub.status == Subscription.Status.ACTIVE
         assert sub.plan == plan
         assert sub.current_period_end is not None
-        # Fatura criada
+        # Fatura criada com o valor do ciclo (billing_amount)
         assert Invoice.objects.filter(tenant=t, status=Invoice.Status.PAID).count() == 1
-        assert Invoice.objects.filter(tenant=t).first().amount == plan.price_monthly
+        assert Invoice.objects.filter(tenant=t).first().amount == plan.billing_amount
 
     def test_cancel_sets_cancel_at_period_end(self, make_tenant):
         t = make_tenant()
@@ -59,7 +59,7 @@ class TestEnsureSubscription:
         t = make_tenant()
         sub = ensure_subscription_for_tenant(t)
         assert sub.status == Subscription.Status.TRIALING
-        assert sub.plan.code == "starter"
+        assert sub.plan.code == "monthly"
         assert sub.trial_ends_at is not None
 
     def test_idempotent(self, make_tenant):

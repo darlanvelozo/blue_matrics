@@ -20,14 +20,34 @@ from apps.tenants.models import Tenant
 
 class Plan(models.Model):
     class Code(models.TextChoices):
-        STARTER = "starter", "Starter"
-        GROWTH = "growth", "Growth"
-        BUSINESS = "business", "Business"
+        # Legacy (mantidos pra histórico, marcados is_active=False)
+        STARTER = "starter", "Starter (legacy)"
+        GROWTH = "growth", "Growth (legacy)"
+        BUSINESS = "business", "Business (legacy)"
+        # Atuais
+        MONTHLY = "monthly", "Mensal"
+        SEMESTRAL = "semestral", "Semestral"
+        ANNUAL = "annual", "Anual"
+
+    class BillingInterval(models.TextChoices):
+        # Mapeia direto para Stripe (interval, interval_count):
+        #   month + 1 → mensal | month + 6 → semestral | year + 1 → anual
+        MONTH = "month", "Mês"
+        YEAR = "year", "Ano"
 
     code = models.CharField(max_length=32, choices=Code.choices, unique=True)
     name = models.CharField(max_length=80)
     description = models.CharField(max_length=200, blank=True, default="")
     price_monthly = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0"))
+    # Valor cobrado por ciclo de fatura.
+    billing_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0"))
+    billing_interval = models.CharField(
+        max_length=10,
+        choices=BillingInterval.choices,
+        default=BillingInterval.MONTH,
+    )
+    # Quantos `billing_interval` cabem em 1 ciclo. Ex: 6 com interval=month → semestral.
+    billing_interval_count = models.PositiveIntegerField(default=1)
     currency = models.CharField(max_length=3, default="BRL")
     max_users = models.IntegerField(default=1)
     features = models.JSONField(default=list)
@@ -42,7 +62,7 @@ class Plan(models.Model):
         ordering = ["sort_order", "price_monthly"]
 
     def __str__(self) -> str:
-        return f"{self.name} (R$ {self.price_monthly})"
+        return f"{self.name} (R$ {self.billing_amount}/{self.billing_interval})"
 
 
 class Subscription(models.Model):

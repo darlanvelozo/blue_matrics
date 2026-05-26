@@ -132,7 +132,7 @@ function Benefits() {
     <section id="beneficios" className="border-b border-[color:var(--border)] py-20">
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeader
-          eyebrow="Por que BlueMetrics"
+          eyebrow="Por que BI AZUL"
           title="Você cuida do negócio. A gente cuida dos números."
         />
         <div className="mt-12 grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -245,25 +245,45 @@ function HowItWorks() {
 }
 
 function Pricing() {
+  const shared = [
+    "Todos os dashboards (Visão geral, Executivo, Financeiro, Comercial)",
+    "Analista IA conversacional com function calling",
+    "Insights automáticos + previsões de caixa",
+    "Curva ABC, RFV e segmentação de clientes",
+    "Sincronização Conta Azul",
+    "Usuários ilimitados",
+    "Suporte por e-mail",
+  ];
   const plans = [
     {
-      name: "Starter",
-      price: "R$ 99",
-      desc: "Para times pequenos que estão começando.",
-      features: ["1 usuário", "Dashboards essenciais", "Sync diário", "Suporte por e-mail"],
+      name: "Mensal",
+      price: "R$ 299,90",
+      cycle: "/mês",
+      equiv: null,
+      badge: null,
+      desc: "Comece já e pague mês a mês. Cancele quando quiser.",
+      features: shared,
+      highlight: false,
     },
     {
-      name: "Growth",
-      price: "R$ 249",
-      desc: "Para empresas em crescimento que querem insights.",
-      features: ["Até 5 usuários", "Todos os dashboards", "Sync de hora em hora", "Insights por IA", "Exportação PDF/Excel"],
+      name: "Semestral",
+      price: "R$ 1.649,45",
+      cycle: "/semestre",
+      equiv: "R$ 274,91/mês",
+      badge: "8% OFF",
+      desc: "Pague a cada 6 meses e economize 8%.",
+      features: [...shared, "Economia de ~8% vs. Mensal", "Pagamento único semestral"],
+      highlight: false,
+    },
+    {
+      name: "Anual",
+      price: "R$ 2.999,00",
+      cycle: "/ano",
+      equiv: "R$ 249,92/mês",
+      badge: "17% OFF",
+      desc: "Maior economia. Pague 1x por ano e relaxe.",
+      features: [...shared, "Economia de ~17% vs. Mensal", "Pagamento único anual"],
       highlight: true,
-    },
-    {
-      name: "Business",
-      price: "R$ 499",
-      desc: "Para operações que dependem de dados em tempo real.",
-      features: ["Usuários ilimitados", "Sync em tempo real", "Insights premium + assistente IA", "API & Webhooks", "Suporte prioritário"],
     },
   ];
   return (
@@ -271,8 +291,11 @@ function Pricing() {
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeader
           eyebrow="Planos"
-          title="Preço simples. Trial grátis de 7 dias em qualquer plano."
+          title="Um plano. Três ciclos. Trial grátis de 7 dias."
         />
+        <p className="mx-auto mt-3 max-w-2xl text-center text-sm text-[color:var(--muted-foreground)]">
+          Sem limites, sem letrinhas miúdas — acesso completo em qualquer ciclo.
+        </p>
         <div className="mt-12 grid gap-6 md:grid-cols-3">
           {plans.map((p) => (
             <Card
@@ -280,21 +303,33 @@ function Pricing() {
               className={
                 p.highlight
                   ? "relative border-blue-500/40 shadow-lg ring-1 ring-blue-500/20"
-                  : ""
+                  : "relative"
               }
             >
               {p.highlight && (
                 <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-500 px-3 py-1 text-xs font-semibold text-white shadow">
-                  Mais popular
+                  Melhor custo-benefício
                 </span>
               )}
               <CardContent className="p-6">
-                <h3 className="text-lg font-semibold">{p.name}</h3>
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="text-lg font-semibold">{p.name}</h3>
+                  {p.badge && (
+                    <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                      {p.badge}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">{p.desc}</p>
                 <div className="mt-6 flex items-baseline gap-1">
-                  <span className="text-4xl font-bold tracking-tight">{p.price}</span>
-                  <span className="text-sm text-[color:var(--muted-foreground)]">/mês</span>
+                  <span className="text-3xl font-bold tracking-tight">{p.price}</span>
+                  <span className="text-sm text-[color:var(--muted-foreground)]">{p.cycle}</span>
                 </div>
+                {p.equiv && (
+                  <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">
+                    equivale a <strong className="text-[color:var(--foreground)]">{p.equiv}</strong>
+                  </p>
+                )}
                 <ul className="mt-6 space-y-2 text-sm">
                   {p.features.map((f) => (
                     <li key={f} className="flex items-start gap-2">
@@ -376,14 +411,76 @@ function FinalCta() {
 
 function SiteFooter() {
   return (
-    <footer className="py-10">
-      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 text-sm text-[color:var(--muted-foreground)] md:flex-row">
-        <div className="flex items-center gap-4">
-          <Logo />
+    <footer className="border-t border-[color:var(--border)] py-12">
+      <div className="mx-auto max-w-6xl px-4">
+        <div className="grid gap-8 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
+          <div>
+            <Logo />
+            <p className="mt-3 max-w-xs text-xs text-[color:var(--muted-foreground)]">
+              Copiloto financeiro com IA para PMEs brasileiras integrado à Conta Azul.
+            </p>
+          </div>
+          <FooterCol
+            title="Produto"
+            links={[
+              { href: "/#features", label: "Funcionalidades" },
+              { href: "/#planos", label: "Planos" },
+              { href: "/#faq", label: "FAQ" },
+              { href: "/help", label: "Central de ajuda" },
+            ]}
+          />
+          <FooterCol
+            title="Empresa"
+            links={[
+              { href: "mailto:contato@biazul.com", label: "Contato" },
+              { href: "mailto:suporte@biazul.com", label: "Suporte" },
+              { href: "/register", label: "Comece grátis" },
+            ]}
+          />
+          <FooterCol
+            title="Legal"
+            links={[
+              { href: "/legal/termos", label: "Termos de Uso" },
+              { href: "/legal/privacidade", label: "Privacidade (LGPD)" },
+              { href: "/legal/cancelamento", label: "Cancelamento & Reembolso" },
+              { href: "/legal/cookies", label: "Cookies" },
+            ]}
+          />
         </div>
-        <p>© {new Date().getFullYear()} BlueMetrics. Todos os direitos reservados.</p>
+        <div className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-[color:var(--border)] pt-6 text-xs text-[color:var(--muted-foreground)] sm:flex-row sm:items-center">
+          <p>© {new Date().getFullYear()} BI AZUL. Todos os direitos reservados.</p>
+          <p>Pagamentos processados pela Stripe. Dados em conformidade com a LGPD.</p>
+        </div>
       </div>
     </footer>
+  );
+}
+
+function FooterCol({
+  title,
+  links,
+}: {
+  title: string;
+  links: { href: string; label: string }[];
+}) {
+  return (
+    <div>
+      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[color:var(--foreground)]">
+        {title}
+      </h4>
+      <ul className="space-y-2 text-sm text-[color:var(--muted-foreground)]">
+        {links.map((l) => (
+          <li key={l.href + l.label}>
+            <Link
+              href={l.href}
+              className="hover:text-[color:var(--foreground)] transition-colors"
+            >
+              {l.label}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

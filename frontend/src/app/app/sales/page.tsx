@@ -1,7 +1,8 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Receipt, Search } from "lucide-react";
+import { AlertCircle, Receipt, Search } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -69,15 +70,39 @@ function Inner() {
           )}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+          Vendas formais registradas no módulo Conta Azul. Empresas que recebem
+          direto pelo financeiro (PIX/dinheiro/cartão sem ticket de venda) podem
+          ter esta lista quase vazia.
           {data?.summary && (
             <>
-              Total no filtro:{" "}
+              {" Total no filtro:"}{" "}
               <strong className="text-[color:var(--foreground)]">
                 {formatCurrencyBRL(data.summary.total_value)}
               </strong>
             </>
           )}
         </p>
+
+        {data && data.meta.total <= 1 && (
+          <div className="mt-4 flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div className="text-amber-900 dark:text-amber-200">
+              <p className="font-medium">Poucas (ou nenhuma) venda formal sincronizada.</p>
+              <p className="mt-0.5 text-xs">
+                Isso é normal para varejo/serviços que registram entradas direto pelo
+                Financeiro da Conta Azul. Para análise de faturamento, abra o{" "}
+                <Link href="/app/dashboards/financeiro" className="font-medium underline">
+                  dashboard Financeiro
+                </Link>{" "}
+                ou converse com o{" "}
+                <Link href="/app/ai" className="font-medium underline">
+                  Analista IA
+                </Link>
+                .
+              </p>
+            </div>
+          </div>
+        )}
       </header>
 
       <Card>

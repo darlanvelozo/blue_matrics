@@ -17,6 +17,8 @@ dependencies = [
     "cryptography>=42,<46",
     "structlog>=24.1,<25.0",
     "python-dateutil>=2.8,<3.0",
+    "sentry-sdk[django]>=2.0,<3.0",
+    "stripe>=10,<13",
 ]
 
 [tool.setuptools]

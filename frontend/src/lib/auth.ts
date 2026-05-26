@@ -54,3 +54,50 @@ export async function getMe(): Promise<User> {
 export function logout() {
   tokens.clear();
 }
+
+export async function requestPasswordReset(email: string): Promise<{ detail: string }> {
+  return apiFetch("/api/auth/password-reset", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+    skipAuth: true,
+  });
+}
+
+export async function confirmPasswordReset(payload: {
+  uid: string;
+  token: string;
+  new_password: string;
+}): Promise<{ detail: string }> {
+  return apiFetch("/api/auth/password-reset/confirm", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    skipAuth: true,
+  });
+}
+
+export async function updateProfile(payload: { full_name: string }): Promise<User> {
+  return apiFetch<User>("/api/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function changePassword(payload: {
+  current_password: string;
+  new_password: string;
+}): Promise<{ detail: string }> {
+  return apiFetch("/api/auth/me/password", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function changeEmail(payload: {
+  new_email: string;
+  current_password: string;
+}): Promise<User> {
+  return apiFetch<User>("/api/auth/me/email", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

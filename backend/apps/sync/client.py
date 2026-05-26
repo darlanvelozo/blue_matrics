@@ -85,8 +85,12 @@ class ContaAzulClient:
         return self.connection.access_token
 
     # ------------------------------------------------------------------
-    def get(self, path: str, params: dict | None = None) -> dict[str, Any]:
-        """GET com retry. `path` é absoluto a partir do API_BASE (ex.: `/pessoas`)."""
+    def get(self, path: str, params: dict | None = None) -> Any:
+        """GET com retry. `path` é absoluto a partir do API_BASE (ex.: `/pessoas`).
+
+        Retorna o JSON decodificado: pode ser dict (envelope `{itens, paginacao}`)
+        ou list (endpoints como `/venda/vendedores`).
+        """
         url = path if path.startswith("http") else f"{self.api_base}{path}"
         attempt = 0
         last_error: Exception | None = None
@@ -192,6 +196,9 @@ class ContaAzulClient:
 
     @classmethod
     def _extract_items(cls, data: Any, preferred_key: str | None = None) -> list[dict]:
+        # Array no top-level (ex.: /venda/vendedores) — devolve direto.
+        if isinstance(data, list):
+            return [x for x in data if isinstance(x, dict)]
         if not isinstance(data, dict):
             return []
         keys = (preferred_key, *cls._ITEMS_KEYS) if preferred_key else cls._ITEMS_KEYS

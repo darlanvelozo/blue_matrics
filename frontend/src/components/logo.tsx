@@ -1,24 +1,59 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
-export function Logo({ className, href = "/" }: { className?: string; href?: string }) {
+/**
+ * Logo "BI AZUL" — hexágono azul com seta de crescimento.
+ * Inspirada na identidade visual da marca.
+ */
+export function Logo({
+  className,
+  href = "/",
+  showText = true,
+}: {
+  className?: string;
+  href?: string;
+  showText?: boolean;
+}) {
   return (
-    <Link href={href} className={cn("flex items-center gap-2 font-semibold tracking-tight", className)}>
-      <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 text-white shadow-md">
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="h-4 w-4"
-        >
-          <path d="M3 17l6-6 4 4 8-8" />
-          <path d="M14 7h7v7" />
-        </svg>
-      </span>
-      <span className="text-lg">BlueMetrics</span>
+    <Link
+      href={href}
+      className={cn(
+        "flex items-center gap-2 font-bold tracking-tight",
+        className,
+      )}
+    >
+      <BiAzulMark className="h-8 w-8" />
+      {showText && (
+        <span className="text-lg text-[#1e5cff]">BI AZUL</span>
+      )}
     </Link>
+  );
+}
+
+export function BiAzulMark({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 64 64"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-label="BI AZUL"
+    >
+      {/* Hexágono externo */}
+      <path
+        d="M32 4 L56 18 L56 46 L32 60 L8 46 L8 18 Z"
+        fill="#1e5cff"
+      />
+      {/* "Face" interna (sombra/profundidade) */}
+      <path
+        d="M32 60 L56 46 L56 18 L48 22 L48 50 Z"
+        fill="#1748cc"
+        opacity="0.6"
+      />
+      {/* Seta + ondulação no centro */}
+      <g stroke="#ffffff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" fill="none">
+        <path d="M16 38 Q24 30, 30 36 T46 26" />
+        <polyline points="38,22 46,22 46,30" />
+      </g>
+    </svg>
   );
 }

@@ -24,7 +24,7 @@ export default function AdminTenantsPage() {
           Tenants ({data?.total ?? "…"})
         </h1>
         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-          Todas as empresas cadastradas no BlueMetrics.
+          Todas as empresas cadastradas no BI AZUL.
         </p>
       </header>
 

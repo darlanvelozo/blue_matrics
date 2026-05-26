@@ -16,6 +16,7 @@ import {
   Target,
   Users,
   Wallet,
+  Wand2,
   X,
 } from "lucide-react";
 import { Logo } from "@/components/logo";
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils";
 
 const items = [
   { href: "/app", label: "Visão geral", icon: LayoutDashboard, section: null },
+  { href: "/app/ai", label: "Analista IA", icon: Wand2, section: null },
   { href: "/app/dashboards/executivo", label: "Executivo", icon: BarChart3, section: "Dashboards" },
   { href: "/app/dashboards/financeiro", label: "Financeiro", icon: Wallet, section: "Dashboards" },
   { href: "/app/dashboards/comercial", label: "Comercial", icon: ShoppingCart, section: "Dashboards" },
@@ -121,7 +123,7 @@ export function AppSidebar({
           })}
         </nav>
         <div className="border-t border-[color:var(--border)] p-3 text-xs text-[color:var(--muted-foreground)]">
-          <p>BlueMetrics v0.11</p>
+          <p>BI AZUL v0.11</p>
         </div>
       </aside>
     </>

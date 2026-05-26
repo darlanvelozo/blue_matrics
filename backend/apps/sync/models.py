@@ -93,6 +93,11 @@ class Product(TenantScopedModel):
     price = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0"))
     cost = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0"))
     is_active = models.BooleanField(default=True)
+    # Estoque atual sincronizado do Conta Azul (`saldo`). Pode ser negativo
+    # se houver saída sem entrada cadastrada.
+    stock_balance = models.DecimalField(
+        max_digits=14, decimal_places=3, default=Decimal("0"),
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

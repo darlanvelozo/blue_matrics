@@ -39,18 +39,19 @@ class TestSummaryView:
         # cria alguns tenants + subs pra ter dados
         t1 = make_tenant("t1")
         t2 = make_tenant("t2")
-        starter = Plan.objects.get(code="starter")
-        growth = Plan.objects.get(code="growth")
-        Subscription.objects.create(tenant=t1, plan=growth, status="active")
+        monthly = Plan.objects.get(code="monthly")
+        annual = Plan.objects.get(code="annual")
+        Subscription.objects.create(tenant=t1, plan=monthly, status="active")
         Subscription.objects.create(
-            tenant=t2, plan=starter, status="trialing",
+            tenant=t2, plan=annual, status="trialing",
             trial_ends_at=timezone.now() + timedelta(days=5),
         )
         resp = superuser_client.get(self.URL)
         assert resp.status_code == 200
         d = resp.json()
-        assert d["mrr"] == 249.0
-        assert d["arr"] == 249.0 * 12
+        # MRR usa price_monthly do plano ativo (monthly = 299.90)
+        assert d["mrr"] == 299.9
+        assert round(d["arr"], 2) == round(299.9 * 12, 2)
         assert d["active_subscribers"] == 1
         assert d["trialing"] == 1
         assert "mrr_by_plan" in d
@@ -94,13 +95,13 @@ class TestTenantDetailView:
 
     def test_returns_details(self, superuser_client, make_tenant):
         t = make_tenant("detail-test")
-        starter = Plan.objects.get(code="starter")
-        Subscription.objects.create(tenant=t, plan=starter, status="active")
+        monthly = Plan.objects.get(code="monthly")
+        Subscription.objects.create(tenant=t, plan=monthly, status="active")
         resp = superuser_client.get(f"/api/admin-saas/tenants/{t.id}")
         assert resp.status_code == 200
         d = resp.json()
         assert d["tenant"]["slug"] == t.slug
-        assert d["subscription"]["plan"] == "starter"
+        assert d["subscription"]["plan"] == "monthly"
         assert d["subscription"]["status"] == "active"
 
     def test_404(self, superuser_client):

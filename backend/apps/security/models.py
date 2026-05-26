@@ -20,6 +20,8 @@ class AuditAction(models.TextChoices):
     LOGOUT = "logout", "Logout"
     REGISTER = "register", "Cadastro"
     PASSWORD_CHANGE = "password_change", "Troca de senha"
+    PASSWORD_RESET_REQUEST = "password_reset_request", "Solicitação de redefinição de senha"
+    PASSWORD_RESET_CONFIRM = "password_reset_confirm", "Senha redefinida via e-mail"
     CONTA_AZUL_CONNECT = "contaazul_connect", "Conexão Conta Azul"
     CONTA_AZUL_DISCONNECT = "contaazul_disconnect", "Desconexão Conta Azul"
     CREDENTIALS_UPDATED = "credentials_updated", "Credenciais atualizadas"
